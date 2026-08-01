@@ -1,11 +1,14 @@
-import type { AppConfig } from "../config.js";
 import { CommerceEndpointCatalog } from "../providers/dext-commerce/catalog.js";
 import { PrepareModuleStatus } from "../providers/dext-prepare/status.js";
 import type { HealthService } from "./health-service.js";
 
+export interface CapabilityConfig {
+  liveDextRequestsEnabled: boolean;
+}
+
 export class CapabilityService {
   constructor(
-    private readonly config: AppConfig,
+    private readonly config: CapabilityConfig,
     private readonly health: HealthService
   ) {}
 
@@ -13,7 +16,7 @@ export class CapabilityService {
     const healthStatus = await this.health.connectionStatus(tenantId);
     return {
       providerMode: healthStatus.mode,
-      liveDextRequestsEnabled: this.config.DEXT_LIVE_REQUESTS_ENABLED,
+      liveDextRequestsEnabled: this.config.liveDextRequestsEnabled,
       modules: {
         dataHealth: {
           enabled: healthStatus.enabled,

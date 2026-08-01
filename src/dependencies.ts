@@ -121,7 +121,10 @@ export function createDependencies(config: AppConfig): AppDependencies {
     snapshots: repositories.snapshots,
     permalinks,
     health,
-    capabilities: new CapabilityService(config, health),
+    capabilities: new CapabilityService(
+      { liveDextRequestsEnabled: config.DEXT_LIVE_REQUESTS_ENABLED },
+      health
+    ),
     resourceMetadataUrl: new URL(
       "/.well-known/oauth-protected-resource",
       config.PUBLIC_BASE_URL

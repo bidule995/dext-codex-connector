@@ -55,8 +55,14 @@ jobs:
         run: |
           mkdir -p release
           pnpm pack --pack-destination release
+          tar -czf "release/dext-codex-plugin-${GITHUB_REF_NAME}.tar.gz" \
+            .agents .codex-plugin .mcp.json assets plugin/runtime \
+            LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md
+          zip -qr "release/dext-codex-plugin-${GITHUB_REF_NAME}.zip" \
+            .agents .codex-plugin .mcp.json assets plugin/runtime \
+            LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md
           cd release
-          sha256sum -- *.tgz > SHA256SUMS.txt
+          sha256sum -- *.tgz *.tar.gz *.zip > SHA256SUMS.txt
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -69,6 +75,8 @@ jobs:
         with:
           subject-path: |
             release/*.tgz
+            release/*.tar.gz
+            release/*.zip
             release/SHA256SUMS.txt
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

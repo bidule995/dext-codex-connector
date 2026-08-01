@@ -1,9 +1,9 @@
 {
   "name": "dext-codex-connector",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "private": true,
   "type": "module",
-  "description": "Tool-only MCP connector for Dext Data Health with gated Commerce contracts.",
+  "description": "Codex plugin and MCP connector for fixture-only Dext Data Health analysis.",
   "license": "Apache-2.0",
   "author": "César Cros",
   "repository": {
@@ -15,6 +15,10 @@
   },
   "homepage": "https://github.com/bidule995/dext-codex-connector#readme",
   "files": [
+    ".agents",
+    ".codex-plugin",
+    ".mcp.json",
+    "assets",
     "dist",
     "migrations",
     "docs",
@@ -23,8 +27,10 @@
     "compose.yaml",
     "LICENSE",
     "NOTICE",
+    "plugin/runtime",
     "README.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "packageManager": "pnpm@11.9.0",
   "engines": {
@@ -32,7 +38,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm check:plugin",
+    "check:plugin": "node scripts/build-plugin.mjs --check && node scripts/validate-plugin.mjs",
     "dev": "node --watch --env-file-if-exists=.env --import tsx src/server.ts",
     "lint": "eslint src tests --max-warnings=0",
     "release:verify": "node scripts/verify-release-version.mjs",
@@ -59,6 +67,7 @@
     "@types/node": "26.1.2",
     "@types/pg": "8.20.2",
     "@vitest/coverage-v8": "4.1.10",
+    "esbuild": "0.28.1",
     "eslint": "10.8.0",
     "tsx": "4.23.1",
     "typescript": "6.0.3",

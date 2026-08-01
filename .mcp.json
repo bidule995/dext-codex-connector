@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "dext": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./plugin/runtime/dext-fixture-stdio.mjs"
+      ]
+    }
+  }
+}

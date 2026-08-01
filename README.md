@@ -5,17 +5,32 @@
 [![GitHub prerelease](https://img.shields.io/github/v/release/bidule995/dext-codex-connector?include_prereleases&label=release)](https://github.com/bidule995/dext-codex-connector/releases)
 [![License](https://img.shields.io/github/license/bidule995/dext-codex-connector)](LICENSE)
 
-Tool-only MCP connector for Dext Data Health & Insights, with the researched Dext Commerce contracts and Dext Prepare boundary kept behind explicit release gates.
+Installable Codex plugin containing an MCP connector for Dext Data Health & Insights. The same repository also contains a separately deployable HTTP service, while researched Dext Commerce contracts and the Dext Prepare boundary remain behind explicit release gates.
 
 > [!IMPORTANT]
-> This is an independent, unofficial project. It is not affiliated with or endorsed by Dext. The current release is a beta and should be evaluated only with fixtures or an isolated Dext test tenant.
+> This is an independent, unofficial project. It is not affiliated with or endorsed by Dext. The Codex plugin in this beta is deliberately fixture-only and cannot connect to a Dext account.
 
-The current implementation is safe to run locally: it defaults to three fictional companies. Tests reject live mode and use fixtures, mocks, and an optional loopback PostgreSQL database. No development or test command reads browser state, cookies, or a process-wide Dext token.
+The plugin is safe to run locally: its committed stdio bundle hard-codes three fictional companies and process-local memory. It does not load the production configuration, PostgreSQL repositories, Dext HTTP provider, credential decryptor, browser state, cookies, or process-wide Dext tokens. The hosted-service code retains guarded live-provider support for a future isolated staging deployment, but that path is not present in the installed plugin bundle.
+
+## Install in Codex
+
+Requires Node.js 24. No checkout, package-manager install, database, Dext token, or OAuth setup is needed.
+
+```powershell
+codex plugin marketplace add bidule995/dext-codex-connector
+codex plugin add dext-codex-connector@dext-codex-connector
+```
+
+Start a new Codex task after installation so the `dext` tools are loaded. Confirm the safety boundary with `connection_status`; it must report `providerMode: fixture` and `liveDextRequestsEnabled: false`.
+
+See [Codex plugin installation and lifecycle](docs/codex-plugin.md) for upgrades, uninstall, rollback, privacy, and local development details.
 
 ## Implemented surface
 
 | Area | State |
 | --- | --- |
+| Native Codex plugin and marketplace | Implemented; fixture-only beta |
+| Self-contained stdio MCP bundle | Implemented; Node 24, no `node_modules` required |
 | Streamable HTTP MCP at `/mcp` | Implemented |
 | OAuth bearer verification and protected-resource metadata | Implemented; production needs an organization identity provider |
 | Development bearer authentication | Implemented; rejected in production |
@@ -30,7 +45,7 @@ The current implementation is safe to run locally: it defaults to three fictiona
 | PostgreSQL storage and row-level security | Implemented with tenant-integrity migration and forced RLS |
 | Commerce | 33 contracts catalogued; no tools or live adapter registered |
 | Prepare | Disabled pending first-party partner contracts |
-| MCP Apps UI | Deliberately omitted from the first tool-only release |
+| Custom Apps SDK UI | Not included; Codex uses the native plugin/tool experience |
 
 Registered tools:
 
@@ -42,6 +57,9 @@ Registered tools:
 
 ## Safety boundaries
 
+- The installed Codex plugin always constructs the fixture provider and in-memory repositories directly.
+- Plugin behavior cannot be changed by `DEXT_DATA_SOURCE`, database, credential, or production-mode environment variables.
+- The plugin bundle excludes the Dext HTTP adapter, PostgreSQL driver, Fastify, and credential decryption code.
 - `DEXT_DATA_SOURCE` defaults to `fixture`.
 - Tests reject `DEXT_DATA_SOURCE=live` even if the live flag is set.
 - Live mode requires the explicit live flag, PostgreSQL, a tenant connection, and an envelope-encrypted credential stored for that connection.
@@ -56,9 +74,9 @@ Registered tools:
 
 Do not use a personal or company Dext token for development. Provider testing belongs in a dedicated Dext test tenant or Commerce sandbox.
 
-## Local fixture run
+## Local HTTP fixture service
 
-Requires Node 24 and pnpm 11.9.0.
+This is a development path for the separate HTTP service, not the normal Codex plugin installation. It requires Node 24 and pnpm 11.9.0.
 
 ```powershell
 Copy-Item .env.example .env
@@ -80,7 +98,7 @@ Use the bearer token from the local `.env` only for fixture-mode development. Fo
 pnpm check
 ```
 
-The suite covers configuration gates, envelope decryption, opaque cursor and permalink isolation, bounded risk/portfolio scans, schema drift tolerance, rate limiting, tenant-scoped providers and snapshots, mocked HTTP authorization, the 33-contract Commerce catalog, canonical MCP security declarations, exact `search`/`fetch` shapes, audit redaction, OAuth challenges, CORS, and unauthenticated rejection.
+The suite covers plugin manifest and marketplace validation, deterministic bundle synchronization, stdio process startup from an unrelated directory, all twelve tools under hostile live-mode environment values, ephemeral snapshots, package contents, configuration gates, envelope decryption, opaque cursor and permalink isolation, bounded risk/portfolio scans, schema drift tolerance, rate limiting, tenant-scoped providers and snapshots, mocked HTTP authorization, the 33-contract Commerce catalog, canonical MCP security declarations, exact `search`/`fetch` shapes, audit redaction, OAuth challenges, CORS, and unauthenticated rejection.
 
 No test contacts Dext. When `TEST_DATABASE_URL` points to a loopback database whose name contains `test`, integration tests apply both migrations and prove cross-tenant foreign keys and row-level security. CI supplies such a PostgreSQL 17 service. Docker packaging validation also builds an isolated canary image and checks its history, layers, and filesystem; it requires a running Docker daemon.
 
@@ -90,7 +108,14 @@ Useful focused checks:
 pnpm test:integration
 pnpm test:packaging:static
 pnpm test:packaging:docker
+pnpm check:plugin
 pnpm audit --prod
+```
+
+The official local Codex plugin validator can also be run with:
+
+```powershell
+python C:\Users\cesar\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py .
 ```
 
 ## Production prerequisites

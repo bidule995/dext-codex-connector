@@ -1,0 +1,20 @@
+{
+  "name": "dext-codex-connector",
+  "interface": {
+    "displayName": "Dext Codex Connector"
+  },
+  "plugins": [
+    {
+      "name": "dext-codex-connector",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
