@@ -53,7 +53,7 @@ suite("Postgres tenant integrity", () => {
       `INSERT INTO memberships (tenant_id, user_id, role, grants)
        VALUES
         ($1, $2, 'administrator', ARRAY['connector.read','records.read','health.read']),
-        ($1, $3, 'member', ARRAY['connector.read','records.read','health.read']),
+        ($1, $3, 'viewer', ARRAY['connector.read','records.read','health.read']),
         ($4, $5, 'administrator', ARRAY['connector.read','records.read','health.read'])`,
       [tenantA, userA, userA2, tenantB, userB]
     );
