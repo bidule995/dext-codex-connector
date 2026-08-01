@@ -3,6 +3,7 @@ import {
   type StreamableHTTPServerTransportOptions
 } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import rateLimit from "@fastify/rate-limit";
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -30,6 +31,18 @@ const ProvisionConnectionSchema = z.object({
   label: z.string().trim().min(1).max(100),
   token: z.string().min(8).max(20_000)
 });
+
+const ConnectionReadRateLimit = {
+  max: 60,
+  timeWindow: "1 minute"
+} as const;
+
+const ConnectionWriteRateLimit = {
+  max: 10,
+  timeWindow: "1 minute",
+  continueExceeding: true,
+  exponentialBackoff: true
+} as const;
 
 function statusForError(code: string): number {
   switch (code) {
@@ -146,154 +159,184 @@ export function buildApp(
     scopes_supported: Object.values(ConnectorScopes)
   }));
 
-  app.get("/api/connections", async (request, reply) => {
-    reply.header("cache-control", "no-store");
-    try {
-      const auth = await authenticate(request, dependencies);
-      requireScope(auth, ConnectorScopes.ConnectorRead);
-      if (!dependencies.connections) {
-        throw new ConnectorError({
-          code: ConnectorErrorCode.UnsupportedCapability,
-          message: "Connection management is unavailable in fixture mode."
-        });
-      }
-      const connections = await dependencies.connections.list(
-        auth.tenantId,
-        auth.userId
-      );
-      return reply.send({
-        connections: connections.map(publicConnection)
-      });
-    } catch (error) {
-      return writeHttpError(reply, error, config, ConnectorScopes.ConnectorRead);
-    }
-  });
-
-  app.put<{
-    Params: { module: string };
-    Body: unknown;
-  }>("/api/connections/:module", async (request, reply) => {
-    reply.header("cache-control", "no-store");
-    let auditAuth: AuthContext | undefined;
-    let auditModule: string | undefined;
-    try {
-      const auth = await authenticate(request, dependencies);
-      auditAuth = auth;
-      requireScope(auth, ConnectorScopes.ConnectionsWrite);
-      if (!dependencies.connections) {
-        throw new ConnectorError({
-          code: ConnectorErrorCode.UnsupportedCapability,
-          message: "Connection management is unavailable in fixture mode."
-        });
-      }
-      const moduleResult = ConnectionModuleSchema.safeParse(
-        request.params.module
-      );
-      const bodyResult = ProvisionConnectionSchema.safeParse(request.body);
-      if (!moduleResult.success || !bodyResult.success) {
-        throw new ConnectorError({
-          code: ConnectorErrorCode.InvalidInput,
-          message: "The connection request is invalid."
-        });
-      }
-      auditModule = moduleResult.data;
-      const connection = await dependencies.connections.provision({
-        tenantId: auth.tenantId,
-        userId: auth.userId,
-        module: moduleResult.data,
-        environment: bodyResult.data.environment,
-        label: bodyResult.data.label,
-        token: bodyResult.data.token
-      });
-      await dependencies.audit.record({
-        tenantId: auth.tenantId,
-        userId: auth.userId,
-        tool: "provision_connection",
-        outcome: "success",
-        targetIds: [connection.module]
-      });
-      return reply.status(201).send({
-        connection: publicConnection(connection)
-      });
-    } catch (error) {
-      if (auditAuth) {
-        await dependencies.audit.record({
-          tenantId: auditAuth.tenantId,
-          userId: auditAuth.userId,
-          tool: "provision_connection",
-          outcome: "error",
-          targetIds: auditModule ? [auditModule] : [],
-          errorCode: asConnectorError(error).code
-        });
-      }
-      return writeHttpError(
-        reply,
-        error,
-        config,
-        ConnectorScopes.ConnectionsWrite
-      );
-    }
-  });
-
-  app.delete<{ Params: { module: string } }>(
-    "/api/connections/:module",
-    async (request, reply) => {
-      reply.header("cache-control", "no-store");
-      let auditAuth: AuthContext | undefined;
-      let auditModule: string | undefined;
-      try {
-        const auth = await authenticate(request, dependencies);
-        auditAuth = auth;
-        requireScope(auth, ConnectorScopes.ConnectionsWrite);
-        if (!dependencies.connections) {
-          throw new ConnectorError({
-            code: ConnectorErrorCode.UnsupportedCapability,
-            message: "Connection management is unavailable in fixture mode."
-          });
+  app.register(async (connectionApi) => {
+    await connectionApi.register(rateLimit, {
+      global: false,
+      enableDraftSpec: true,
+      errorResponseBuilder: (_request, context) => ({
+        statusCode: 429,
+        error: {
+          code: ConnectorErrorCode.RateLimited,
+          message: "Too many connector requests. Retry later.",
+          retryable: true,
+          retryAfterMs: context.ttl
         }
-        const moduleResult = ConnectionModuleSchema.safeParse(
-          request.params.module
-        );
-        if (!moduleResult.success) {
-          throw new ConnectorError({
-            code: ConnectorErrorCode.InvalidInput,
-            message: "The connection module is invalid."
+      })
+    });
+
+    connectionApi.get(
+      "/api/connections",
+      { config: { rateLimit: ConnectionReadRateLimit } },
+      async (request, reply) => {
+        reply.header("cache-control", "no-store");
+        try {
+          const auth = await authenticate(request, dependencies);
+          requireScope(auth, ConnectorScopes.ConnectorRead);
+          if (!dependencies.connections) {
+            throw new ConnectorError({
+              code: ConnectorErrorCode.UnsupportedCapability,
+              message: "Connection management is unavailable in fixture mode."
+            });
+          }
+          const connections = await dependencies.connections.list(
+            auth.tenantId,
+            auth.userId
+          );
+          return reply.send({
+            connections: connections.map(publicConnection)
           });
+        } catch (error) {
+          return writeHttpError(
+            reply,
+            error,
+            config,
+            ConnectorScopes.ConnectorRead
+          );
         }
-        auditModule = moduleResult.data;
-        await dependencies.connections.disconnect(
-          auth.tenantId,
-          auth.userId,
-          moduleResult.data
-        );
-        await dependencies.audit.record({
-          tenantId: auth.tenantId,
-          userId: auth.userId,
-          tool: "disconnect_connection",
-          outcome: "success",
-          targetIds: [moduleResult.data]
-        });
-        return reply.status(204).send();
-      } catch (error) {
-        if (auditAuth) {
+      }
+    );
+
+    connectionApi.put<{
+      Params: { module: string };
+      Body: unknown;
+    }>(
+      "/api/connections/:module",
+      { config: { rateLimit: ConnectionWriteRateLimit } },
+      async (request, reply) => {
+        reply.header("cache-control", "no-store");
+        let auditAuth: AuthContext | undefined;
+        let auditModule: string | undefined;
+        try {
+          const auth = await authenticate(request, dependencies);
+          auditAuth = auth;
+          requireScope(auth, ConnectorScopes.ConnectionsWrite);
+          if (!dependencies.connections) {
+            throw new ConnectorError({
+              code: ConnectorErrorCode.UnsupportedCapability,
+              message: "Connection management is unavailable in fixture mode."
+            });
+          }
+          const moduleResult = ConnectionModuleSchema.safeParse(
+            request.params.module
+          );
+          const bodyResult = ProvisionConnectionSchema.safeParse(request.body);
+          if (!moduleResult.success || !bodyResult.success) {
+            throw new ConnectorError({
+              code: ConnectorErrorCode.InvalidInput,
+              message: "The connection request is invalid."
+            });
+          }
+          auditModule = moduleResult.data;
+          const connection = await dependencies.connections.provision({
+            tenantId: auth.tenantId,
+            userId: auth.userId,
+            module: moduleResult.data,
+            environment: bodyResult.data.environment,
+            label: bodyResult.data.label,
+            token: bodyResult.data.token
+          });
           await dependencies.audit.record({
-            tenantId: auditAuth.tenantId,
-            userId: auditAuth.userId,
-            tool: "disconnect_connection",
-            outcome: "error",
-            targetIds: auditModule ? [auditModule] : [],
-            errorCode: asConnectorError(error).code
+            tenantId: auth.tenantId,
+            userId: auth.userId,
+            tool: "provision_connection",
+            outcome: "success",
+            targetIds: [connection.module]
           });
+          return reply.status(201).send({
+            connection: publicConnection(connection)
+          });
+        } catch (error) {
+          if (auditAuth) {
+            await dependencies.audit.record({
+              tenantId: auditAuth.tenantId,
+              userId: auditAuth.userId,
+              tool: "provision_connection",
+              outcome: "error",
+              targetIds: auditModule ? [auditModule] : [],
+              errorCode: asConnectorError(error).code
+            });
+          }
+          return writeHttpError(
+            reply,
+            error,
+            config,
+            ConnectorScopes.ConnectionsWrite
+          );
         }
-        return writeHttpError(
-          reply,
-          error,
-          config,
-          ConnectorScopes.ConnectionsWrite
-        );
       }
-    }
-  );
+    );
+
+    connectionApi.delete<{ Params: { module: string } }>(
+      "/api/connections/:module",
+      { config: { rateLimit: ConnectionWriteRateLimit } },
+      async (request, reply) => {
+        reply.header("cache-control", "no-store");
+        let auditAuth: AuthContext | undefined;
+        let auditModule: string | undefined;
+        try {
+          const auth = await authenticate(request, dependencies);
+          auditAuth = auth;
+          requireScope(auth, ConnectorScopes.ConnectionsWrite);
+          if (!dependencies.connections) {
+            throw new ConnectorError({
+              code: ConnectorErrorCode.UnsupportedCapability,
+              message: "Connection management is unavailable in fixture mode."
+            });
+          }
+          const moduleResult = ConnectionModuleSchema.safeParse(
+            request.params.module
+          );
+          if (!moduleResult.success) {
+            throw new ConnectorError({
+              code: ConnectorErrorCode.InvalidInput,
+              message: "The connection module is invalid."
+            });
+          }
+          auditModule = moduleResult.data;
+          await dependencies.connections.disconnect(
+            auth.tenantId,
+            auth.userId,
+            moduleResult.data
+          );
+          await dependencies.audit.record({
+            tenantId: auth.tenantId,
+            userId: auth.userId,
+            tool: "disconnect_connection",
+            outcome: "success",
+            targetIds: [moduleResult.data]
+          });
+          return reply.status(204).send();
+        } catch (error) {
+          if (auditAuth) {
+            await dependencies.audit.record({
+              tenantId: auditAuth.tenantId,
+              userId: auditAuth.userId,
+              tool: "disconnect_connection",
+              outcome: "error",
+              targetIds: auditModule ? [auditModule] : [],
+              errorCode: asConnectorError(error).code
+            });
+          }
+          return writeHttpError(
+            reply,
+            error,
+            config,
+            ConnectorScopes.ConnectionsWrite
+          );
+        }
+      }
+    );
+  });
 
   app.options("/mcp", async (_request, reply) => reply.status(204).send());
 

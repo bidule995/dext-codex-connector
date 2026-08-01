@@ -45,6 +45,10 @@ CURSOR_ENCRYPTION_KEY=<separate random secret>
 
 Leave `DEXT_COMMERCE_ENABLED=false` until the sandbox validation runbook passes. The connection API may still be exercised through mocked validation in CI; no automated test is allowed to contact Dext.
 
+## Rate limiting
+
+The authenticated connection API enforces process-local limits per client address: 60 status reads and 10 connection writes per minute. Deploy an additional distributed limit at the ingress or API gateway so the limit remains effective across replicas. Do not enable forwarded-client-IP trust unless the service is reachable only through a specifically trusted proxy; otherwise clients can forge the address used as the rate-limit key.
+
 ## Convert the plugin after deployment
 
 After the hosted `/healthz`, OAuth discovery, `/mcp`, user-owned connection API, and isolated provider tests pass, update the plugin manifest with the real endpoint:

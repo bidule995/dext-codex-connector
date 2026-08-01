@@ -245,4 +245,95 @@ describe("HTTP app", () => {
       "sandbox-secret-key"
     );
   });
+
+  it("rate-limits authenticated connection status reads", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    dependencies.connections = new ConnectionService(
+      {
+        getActiveForModule: vi.fn(),
+        listForUser: vi.fn(async () => []),
+        replaceActiveConnection: vi.fn(),
+        disconnect: vi.fn()
+      },
+      { encrypt: vi.fn() },
+      { validate: vi.fn() },
+      false
+    );
+    const app = createApp(config, dependencies);
+    for (let requestNumber = 0; requestNumber < 60; requestNumber += 1) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/connections",
+        headers: { authorization: "Bearer local-dev-token-change-me" }
+      });
+      expect(response.statusCode).toBe(200);
+    }
+    const limited = await app.inject({
+      method: "GET",
+      url: "/api/connections",
+      headers: { authorization: "Bearer local-dev-token-change-me" }
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBeDefined();
+    expect(limited.json()).toMatchObject({
+      error: { code: "rate_limited", retryable: true }
+    });
+  });
+
+  it("rate-limits each authenticated connection write route", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    dependencies.connections = new ConnectionService(
+      {
+        getActiveForModule: vi.fn(),
+        listForUser: vi.fn(async () => []),
+        replaceActiveConnection: vi.fn(),
+        disconnect: vi.fn()
+      },
+      { encrypt: vi.fn() },
+      { validate: vi.fn() },
+      false
+    );
+    const app = createApp(config, dependencies);
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/connections/commerce",
+        headers: {
+          authorization: "Bearer local-dev-token-change-me",
+          "content-type": "application/json"
+        },
+        payload: {}
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    const limitedProvision = await app.inject({
+      method: "PUT",
+      url: "/api/connections/commerce",
+      headers: {
+        authorization: "Bearer local-dev-token-change-me",
+        "content-type": "application/json"
+      },
+      payload: {}
+    });
+    expect(limitedProvision.statusCode).toBe(429);
+    expect(limitedProvision.headers["retry-after"]).toBeDefined();
+
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await app.inject({
+        method: "DELETE",
+        url: "/api/connections/commerce",
+        headers: { authorization: "Bearer local-dev-token-change-me" }
+      });
+      expect(response.statusCode).toBe(204);
+    }
+    const limitedDisconnect = await app.inject({
+      method: "DELETE",
+      url: "/api/connections/commerce",
+      headers: { authorization: "Bearer local-dev-token-change-me" }
+    });
+    expect(limitedDisconnect.statusCode).toBe(429);
+    expect(limitedDisconnect.headers["retry-after"]).toBeDefined();
+  });
 });
