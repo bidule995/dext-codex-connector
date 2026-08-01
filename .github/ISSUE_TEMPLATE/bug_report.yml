@@ -1,0 +1,46 @@
+name: Bug report
+description: Report reproducible incorrect connector behavior using fictional data.
+title: "bug: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, real customer data, cookies, or authorization headers. Report security issues privately instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v0.1.0-beta.1
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Data source
+      options:
+        - Fixture
+        - Loopback mock
+        - Isolated Dext test tenant
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include expected behavior and a minimal fictional reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted diagnostics
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed credentials, authorization headers, and customer-identifying data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

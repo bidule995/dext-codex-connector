@@ -1,0 +1,172 @@
+import { afterEach, describe, expect, it } from "vitest";
+
+import { buildApp } from "../../src/app.js";
+import { ConnectorScopes } from "../../src/auth/types.js";
+import type { AppConfig } from "../../src/config.js";
+import { createDependencies, type AppDependencies } from "../../src/dependencies.js";
+import { fixtureConfig } from "../helpers/config.js";
+
+const apps: ReturnType<typeof buildApp>[] = [];
+
+function createApp(
+  config: AppConfig = fixtureConfig(),
+  dependencies?: AppDependencies
+) {
+  const app = buildApp(config, dependencies);
+  apps.push(app);
+  return app;
+}
+
+afterEach(async () => {
+  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+});
+
+describe("HTTP app", () => {
+  it("reports fixture mode without authentication or upstream traffic", async () => {
+    const response = await createApp().inject({
+      method: "GET",
+      url: "/healthz"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      status: "ok",
+      providerMode: "fixture",
+      liveDextRequestsEnabled: false
+    });
+  });
+
+  it("publishes protected-resource metadata", async () => {
+    const response = await createApp().inject({
+      method: "GET",
+      url: "/.well-known/oauth-protected-resource"
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      resource: "http://localhost:3000/mcp",
+      bearer_methods_supported: ["header"]
+    });
+  });
+
+  it("rejects unauthenticated MCP requests before tool execution", async () => {
+    const response = await createApp().inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { "content-type": "application/json" },
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" }
+        }
+      }
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["www-authenticate"]).toContain(
+      "oauth-protected-resource"
+    );
+    expect(response.headers["www-authenticate"]).toContain(
+      'error="invalid_token"'
+    );
+  });
+
+  it("allows CORS preflight without authentication", async () => {
+    const response = await createApp().inject({
+      method: "OPTIONS",
+      url: "/mcp"
+    });
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-methods"]).toContain("POST");
+  });
+
+  it("emits canonical and compatibility OAuth schemes on the raw tools/list wire response", async () => {
+    const response = await createApp().inject({
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        authorization: "Bearer local-dev-token-change-me",
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-protocol-version": "2025-11-25"
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {}
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    const payload = response.json<{
+      result: {
+        tools: Array<{
+          name: string;
+          securitySchemes?: unknown;
+          _meta?: Record<string, unknown>;
+        }>;
+      };
+    }>();
+    const healthTool = payload.result.tools.find(
+      ({ name }) => name === "list_clients"
+    );
+    expect(healthTool?.securitySchemes).toEqual([
+      { type: "oauth2", scopes: [ConnectorScopes.HealthRead] }
+    ]);
+    expect(healthTool?._meta?.["securitySchemes"]).toEqual(
+      healthTool?.securitySchemes
+    );
+  });
+
+  it("routes opaque record links and enforces tenant plus health.read", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    dependencies.auth = {
+      authenticate: async (header) => ({
+        tenantId: header?.includes("tenant-b") ? "tenant-b" : "tenant-a",
+        userId: "test-user",
+        scopes: header?.includes("limited")
+          ? new Set([ConnectorScopes.ConnectorRead])
+          : new Set([ConnectorScopes.HealthRead]),
+        mode: "development"
+      })
+    };
+    const app = createApp(config, dependencies);
+    const [searchResult] = await dependencies.health.search(
+      "tenant-a",
+      "harbor"
+    );
+    const url = new URL(searchResult!.url);
+    expect(url.pathname.length).toBeLessThan(100);
+    expect(url.pathname).not.toContain("tenant-a");
+    expect(url.pathname).not.toContain("fixture-harbor");
+
+    const allowed = await app.inject({
+      method: "GET",
+      url: url.pathname,
+      headers: { authorization: "Bearer tenant-a" }
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({
+      id: "dext:health:client:fixture-harbor"
+    });
+
+    const limited = await app.inject({
+      method: "GET",
+      url: url.pathname,
+      headers: { authorization: "Bearer limited" }
+    });
+    expect(limited.statusCode).toBe(403);
+    expect(limited.headers["www-authenticate"]).toContain(
+      'error="insufficient_scope"'
+    );
+
+    const wrongTenant = await app.inject({
+      method: "GET",
+      url: url.pathname,
+      headers: { authorization: "Bearer tenant-b" }
+    });
+    expect(wrongTenant.statusCode).toBe(404);
+  });
+});
