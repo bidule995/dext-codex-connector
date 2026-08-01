@@ -1,4 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -29,5 +32,47 @@ describe("packaging security", () => {
   it("keeps npm configuration free of registry credentials", async () => {
     const npmrc = await readFile(".npmrc", "utf8");
     expect(npmrc).not.toMatch(/_authToken|password|username/iu);
+  });
+
+  it("includes the installable Codex plugin in the package archive", async () => {
+    const destination = await mkdtemp(join(tmpdir(), "dext-pack-"));
+    const pnpmCli = process.env["npm_execpath"];
+    expect(pnpmCli).toBeTruthy();
+    try {
+      execFileSync(
+        process.execPath,
+        [pnpmCli!, "pack", "--pack-destination", destination],
+        { stdio: "pipe" }
+      );
+      const archive = (await readdir(destination)).find((name) =>
+        name.endsWith(".tgz")
+      );
+      expect(archive).toBeDefined();
+      const listing = execFileSync("tar", ["-tf", join(destination, archive!)], {
+        encoding: "utf8"
+      });
+      for (const required of [
+        "package/.agents/plugins/marketplace.json",
+        "package/.codex-plugin/plugin.json",
+        "package/.mcp.json",
+        "package/assets/icon.svg",
+        "package/plugin/runtime/dext-fixture-stdio.mjs",
+        "package/THIRD_PARTY_NOTICES.md"
+      ]) {
+        expect(listing).toContain(required);
+      }
+      const files = listing.split(/\r?\n/u).filter(Boolean);
+      expect(files).not.toContain("package/.env");
+      expect(
+        files.some(
+          (path) =>
+            path.startsWith("package/.env.") && path !== "package/.env.example"
+        )
+      ).toBe(false);
+      expect(files.some((path) => path.includes("node_modules/"))).toBe(false);
+      expect(files.some((path) => /cookie|\.log$/iu.test(path))).toBe(false);
+    } finally {
+      await rm(destination, { recursive: true, force: true });
+    }
   });
 });

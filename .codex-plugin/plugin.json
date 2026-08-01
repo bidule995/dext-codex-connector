@@ -1,0 +1,41 @@
+{
+  "name": "dext-codex-connector",
+  "version": "0.1.0-beta.2",
+  "description": "Fixture-only Dext Data Health analysis through a native Codex plugin.",
+  "author": {
+    "name": "César Cros",
+    "url": "https://github.com/bidule995"
+  },
+  "homepage": "https://github.com/bidule995/dext-codex-connector#readme",
+  "repository": "https://github.com/bidule995/dext-codex-connector",
+  "license": "Apache-2.0",
+  "keywords": [
+    "dext",
+    "data-health",
+    "accounting",
+    "mcp",
+    "fixture"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Dext Data Health",
+    "shortDescription": "Explore fictional Dext health data safely",
+    "longDescription": "Read-only Dext Data Health tools backed exclusively by fictional fixture data and process-local memory.",
+    "developerName": "César Cros",
+    "category": "Productivity",
+    "capabilities": [
+      "Read-only fixture tools",
+      "Portfolio health analysis",
+      "MCP"
+    ],
+    "websiteURL": "https://github.com/bidule995/dext-codex-connector",
+    "defaultPrompt": [
+      "Summarize the health of the fixture client portfolio.",
+      "Find fixture clients with health risks and explain why.",
+      "Compare two fixture clients' health metrics."
+    ],
+    "brandColor": "#176B87",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

@@ -17,8 +17,13 @@ describe("public release metadata", () => {
     };
     const changelog = await projectFile("CHANGELOG.md");
 
-    expect(packageJson.version).toBe("0.1.0-beta.1");
+    const plugin = JSON.parse(
+      await projectFile(".codex-plugin/plugin.json")
+    ) as { version: string };
+
+    expect(packageJson.version).toBe("0.1.0-beta.2");
     expect(CONNECTOR_VERSION).toBe(packageJson.version);
+    expect(plugin.version).toBe(packageJson.version);
     expect(packageJson.license).toBe("Apache-2.0");
     expect(packageJson.repository.url).toContain(
       "github.com/bidule995/dext-codex-connector"
@@ -36,6 +41,7 @@ describe("public release metadata", () => {
 
     expect(release).toContain('      - "v*.*.*"');
     expect(release).toContain("pnpm pack --pack-destination release");
+    expect(release).toContain("dext-codex-plugin-");
     expect(release).toContain("--prerelease");
     expect(release).toContain("sbom: true");
     for (const workflow of workflows) {
