@@ -36,7 +36,9 @@ assert(
   "Plugin must reference .mcp.json."
 );
 assert(
-  manifest.interface?.displayName === "Dext Data Health",
+  ["Dext Data Health", "Dext Connector"].includes(
+    manifest.interface?.displayName
+  ),
   "Missing display name."
 );
 assert(
@@ -71,17 +73,31 @@ for (const asset of [manifest.interface.composerIcon, manifest.interface.logo]) 
 }
 
 const server = mcp.mcpServers?.dext;
-assert(server?.cwd === ".", "Dext MCP server must run from the plugin root.");
-assert(server?.command === "node", "Dext MCP server must use Node.js.");
-assert(
-  JSON.stringify(server?.args) ===
-    JSON.stringify(["./plugin/runtime/dext-fixture-stdio.mjs"]),
-  "Unexpected Dext MCP server arguments."
-);
-assert(
-  server.env === undefined,
-  "Fixture MCP configuration must not inject environment values."
-);
+const hosted = typeof server?.url === "string";
+if (hosted) {
+  const url = new URL(server.url);
+  assert(url.protocol === "https:", "Hosted MCP URL must use HTTPS.");
+  assert(url.pathname === "/mcp", "Hosted MCP URL must end at /mcp.");
+  assert(
+    server.command === undefined &&
+      server.args === undefined &&
+      server.cwd === undefined &&
+      server.env === undefined,
+    "Hosted MCP configuration must not include a stdio fallback."
+  );
+} else {
+  assert(server?.cwd === ".", "Dext MCP server must run from the plugin root.");
+  assert(server?.command === "node", "Dext MCP server must use Node.js.");
+  assert(
+    JSON.stringify(server?.args) ===
+      JSON.stringify(["./plugin/runtime/dext-fixture-stdio.mjs"]),
+    "Unexpected Dext MCP server arguments."
+  );
+  assert(
+    server.env === undefined,
+    "Fixture MCP configuration must not inject environment values."
+  );
+}
 
 assert(
   marketplace.name === "dext-codex-connector",
@@ -142,5 +158,5 @@ assert(
 );
 
 process.stdout.write(
-  `Codex plugin ${manifest.name}@${manifest.version} validated in fixture-only mode.\n`
+  `Codex plugin ${manifest.name}@${manifest.version} validated in ${hosted ? "hosted" : "fixture-only"} mode.\n`
 );

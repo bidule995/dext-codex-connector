@@ -8,14 +8,28 @@ import Fastify, {
   type FastifyReply,
   type FastifyRequest
 } from "fastify";
+import { z } from "zod";
 
-import { ConnectorScopes } from "./auth/types.js";
+import { ConnectorScopes, type AuthContext } from "./auth/types.js";
+import { publicConnection } from "./connections/connection-service.js";
 import { requireScope } from "./auth/auth-service.js";
 import type { AppConfig } from "./config.js";
 import { createDependencies, type AppDependencies } from "./dependencies.js";
-import { asConnectorError, ConnectorErrorCode } from "./errors.js";
+import {
+  asConnectorError,
+  ConnectorError,
+  ConnectorErrorCode
+} from "./errors.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { authenticationChallenge } from "./mcp/security.js";
+import { CONNECTOR_VERSION } from "./version.js";
+
+const ConnectionModuleSchema = z.enum(["data_health", "commerce"]);
+const ProvisionConnectionSchema = z.object({
+  environment: z.enum(["sandbox", "production"]),
+  label: z.string().trim().min(1).max(100),
+  token: z.string().min(8).max(20_000)
+});
 
 function statusForError(code: string): number {
   switch (code) {
@@ -103,13 +117,16 @@ export function buildApp(
       "access-control-allow-headers",
       "authorization, content-type, mcp-protocol-version, mcp-session-id"
     );
-    reply.header("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+    reply.header(
+      "access-control-allow-methods",
+      "GET, POST, PUT, DELETE, OPTIONS"
+    );
     reply.header("access-control-expose-headers", "mcp-session-id");
   });
 
   app.get("/", async () => ({
     name: "dext-codex-connector",
-    version: "0.1.0",
+    version: CONNECTOR_VERSION,
     mcpEndpoint: "/mcp",
     providerMode: dependencies.health.providerMode
   }));
@@ -128,6 +145,155 @@ export function buildApp(
     bearer_methods_supported: ["header"],
     scopes_supported: Object.values(ConnectorScopes)
   }));
+
+  app.get("/api/connections", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    try {
+      const auth = await authenticate(request, dependencies);
+      requireScope(auth, ConnectorScopes.ConnectorRead);
+      if (!dependencies.connections) {
+        throw new ConnectorError({
+          code: ConnectorErrorCode.UnsupportedCapability,
+          message: "Connection management is unavailable in fixture mode."
+        });
+      }
+      const connections = await dependencies.connections.list(
+        auth.tenantId,
+        auth.userId
+      );
+      return reply.send({
+        connections: connections.map(publicConnection)
+      });
+    } catch (error) {
+      return writeHttpError(reply, error, config, ConnectorScopes.ConnectorRead);
+    }
+  });
+
+  app.put<{
+    Params: { module: string };
+    Body: unknown;
+  }>("/api/connections/:module", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    let auditAuth: AuthContext | undefined;
+    let auditModule: string | undefined;
+    try {
+      const auth = await authenticate(request, dependencies);
+      auditAuth = auth;
+      requireScope(auth, ConnectorScopes.ConnectionsWrite);
+      if (!dependencies.connections) {
+        throw new ConnectorError({
+          code: ConnectorErrorCode.UnsupportedCapability,
+          message: "Connection management is unavailable in fixture mode."
+        });
+      }
+      const moduleResult = ConnectionModuleSchema.safeParse(
+        request.params.module
+      );
+      const bodyResult = ProvisionConnectionSchema.safeParse(request.body);
+      if (!moduleResult.success || !bodyResult.success) {
+        throw new ConnectorError({
+          code: ConnectorErrorCode.InvalidInput,
+          message: "The connection request is invalid."
+        });
+      }
+      auditModule = moduleResult.data;
+      const connection = await dependencies.connections.provision({
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        module: moduleResult.data,
+        environment: bodyResult.data.environment,
+        label: bodyResult.data.label,
+        token: bodyResult.data.token
+      });
+      await dependencies.audit.record({
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        tool: "provision_connection",
+        outcome: "success",
+        targetIds: [connection.module]
+      });
+      return reply.status(201).send({
+        connection: publicConnection(connection)
+      });
+    } catch (error) {
+      if (auditAuth) {
+        await dependencies.audit.record({
+          tenantId: auditAuth.tenantId,
+          userId: auditAuth.userId,
+          tool: "provision_connection",
+          outcome: "error",
+          targetIds: auditModule ? [auditModule] : [],
+          errorCode: asConnectorError(error).code
+        });
+      }
+      return writeHttpError(
+        reply,
+        error,
+        config,
+        ConnectorScopes.ConnectionsWrite
+      );
+    }
+  });
+
+  app.delete<{ Params: { module: string } }>(
+    "/api/connections/:module",
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      let auditAuth: AuthContext | undefined;
+      let auditModule: string | undefined;
+      try {
+        const auth = await authenticate(request, dependencies);
+        auditAuth = auth;
+        requireScope(auth, ConnectorScopes.ConnectionsWrite);
+        if (!dependencies.connections) {
+          throw new ConnectorError({
+            code: ConnectorErrorCode.UnsupportedCapability,
+            message: "Connection management is unavailable in fixture mode."
+          });
+        }
+        const moduleResult = ConnectionModuleSchema.safeParse(
+          request.params.module
+        );
+        if (!moduleResult.success) {
+          throw new ConnectorError({
+            code: ConnectorErrorCode.InvalidInput,
+            message: "The connection module is invalid."
+          });
+        }
+        auditModule = moduleResult.data;
+        await dependencies.connections.disconnect(
+          auth.tenantId,
+          auth.userId,
+          moduleResult.data
+        );
+        await dependencies.audit.record({
+          tenantId: auth.tenantId,
+          userId: auth.userId,
+          tool: "disconnect_connection",
+          outcome: "success",
+          targetIds: [moduleResult.data]
+        });
+        return reply.status(204).send();
+      } catch (error) {
+        if (auditAuth) {
+          await dependencies.audit.record({
+            tenantId: auditAuth.tenantId,
+            userId: auditAuth.userId,
+            tool: "disconnect_connection",
+            outcome: "error",
+            targetIds: auditModule ? [auditModule] : [],
+            errorCode: asConnectorError(error).code
+          });
+        }
+        return writeHttpError(
+          reply,
+          error,
+          config,
+          ConnectorScopes.ConnectionsWrite
+        );
+      }
+    }
+  );
 
   app.options("/mcp", async (_request, reply) => reply.status(204).send());
 
@@ -169,7 +335,7 @@ export function buildApp(
     async (request, reply) => {
       try {
         const auth = await authenticate(request, dependencies);
-        requireScope(auth, ConnectorScopes.HealthRead);
+        requireScope(auth, ConnectorScopes.RecordsRead);
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(request.params.token)) {
           return reply.status(404).send({
             error: {
@@ -181,10 +347,12 @@ export function buildApp(
         }
         const record = await dependencies.permalinks.resolve(
           auth.tenantId,
+          auth.userId,
           request.params.token
         );
-        const result = await dependencies.health.fetchRecord(
+        const result = await dependencies.records.fetchRecord(
           auth.tenantId,
+          auth.userId,
           record.recordId,
           record.connectionId
         );
@@ -197,7 +365,7 @@ export function buildApp(
         });
         return reply.send(result);
       } catch (error) {
-        return writeHttpError(reply, error, config, ConnectorScopes.HealthRead);
+        return writeHttpError(reply, error, config, ConnectorScopes.RecordsRead);
       }
     }
   );

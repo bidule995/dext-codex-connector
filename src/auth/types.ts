@@ -20,6 +20,8 @@ export interface ExternalIdentityRepository {
 
 export const ConnectorScopes = {
   ConnectorRead: "connector.read",
+  RecordsRead: "records.read",
+  ConnectionsWrite: "connections.write",
   HealthRead: "health.read",
   HealthSnapshotsWrite: "health.snapshots.write",
   CommerceRead: "commerce.read",

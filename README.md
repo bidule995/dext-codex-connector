@@ -5,78 +5,73 @@
 [![GitHub prerelease](https://img.shields.io/github/v/release/bidule995/dext-codex-connector?include_prereleases&label=release)](https://github.com/bidule995/dext-codex-connector/releases)
 [![License](https://img.shields.io/github/license/bidule995/dext-codex-connector)](LICENSE)
 
-Installable Codex plugin containing an MCP connector for Dext Data Health & Insights. The same repository also contains a separately deployable HTTP service, while researched Dext Commerce contracts and the Dext Prepare boundary remain behind explicit release gates.
+An installable Codex plugin backed by a read-only MCP connector for Dext Data Health and optional Dext Commerce invoice retrieval.
 
 > [!IMPORTANT]
-> This is an independent, unofficial project. It is not affiliated with or endorsed by Dext. The Codex plugin in this beta is deliberately fixture-only and cannot connect to a Dext account.
+> This is an independent, unofficial project. It is not affiliated with or endorsed by Dext. No development or automated test may use browser cookies, the currently logged-in company account, or a production Dext credential.
 
-The plugin is safe to run locally: its committed stdio bundle hard-codes three fictional companies and process-local memory. It does not load the production configuration, PostgreSQL repositories, Dext HTTP provider, credential decryptor, browser state, cookies, or process-wide Dext tokens. The hosted-service code retains guarded live-provider support for a future isolated staging deployment, but that path is not present in the installed plugin bundle.
+## Current release state
 
-## Install in Codex
+The repository now contains the real hosted connector implementation, but the checked-in plugin remains on the fictional local runtime until hosting and OAuth exist. This is intentional:
 
-Requires Node.js 24. No checkout, package-manager install, database, Dext token, or OAuth setup is needed.
+- `src/server.ts` serves the authenticated Streamable HTTP MCP endpoint at `/mcp`.
+- Data Health uses the three documented read endpoints on `api.precision.dext.com`.
+- Commerce implements only documented reads for credential validation and invoice/bill transactions; it is disabled by default pending sandbox evidence.
+- `PUT /api/connections/{module}` validates and envelope-encrypts a credential for the authenticated user outside MCP conversations.
+- PostgreSQL row-level security binds connections, credentials, snapshots, and permalinks to both tenant and user.
+- Production refuses fixture mode.
+- The release workflow refuses to publish `v0.2` until `.mcp.json` points to a real public HTTPS `/mcp` endpoint with no stdio fallback.
+
+The current public `v0.1.0-beta.2` plugin is still fixture-only. The `0.2.0-beta.1` work on this branch is a deployment candidate, not a live release.
+
+## Tool surface
+
+Every installation exposes:
+
+- `connection_status`, `list_capabilities`
+- standard `search`, `fetch`
+- `list_clients`, `get_client`, `get_client_activity_stats`
+- `summarize_portfolio_health`, `find_client_health_risks`, `compare_clients`
+- `snapshot_health_metrics`, `compare_health_snapshots`
+
+When the hosted deployment explicitly enables the reviewed Commerce provider, it also exposes:
+
+- `list_invoices`
+- `get_invoice`
+
+`search` and `fetch` use the standard text-only company-knowledge contract and combine the enabled Data Health and Commerce record families. Dext Prepare remains disabled because no current first-party partner API contract has been supplied.
+
+No Dext write, export, delete, file extraction, account-connection, synchronization, password, or two-factor tool is registered.
+
+## Authentication and credentials
+
+There are two separate security legs:
+
+1. Codex authenticates to this connector through OAuth 2.1 and the connector's protected-resource metadata.
+2. The connector uses the current user's separately stored Dext credential only for the selected upstream module.
+
+Dext credentials are never MCP inputs. The authenticated HTTPS connection API validates a submitted token against the exact documented host before it encrypts and stores it. Rotation is transactional, and failed validation leaves the current connection unchanged.
+
+Relevant OAuth scopes are `connector.read`, `connections.write`, `records.read`, `health.read`, `health.snapshots.write`, and `commerce.read`. Requested token scopes are intersected with stored membership grants.
+
+See [Authenticated connection API](docs/connection-api.md) and [Security and data handling](docs/security-and-data-handling.md).
+
+## Safe local plugin
+
+Until a hosted prerelease is published, the repository marketplace installs the self-contained fictional stdio plugin. It requires Node.js 24 and cannot read Dext configuration or credentials:
 
 ```powershell
 codex plugin marketplace add bidule995/dext-codex-connector
 codex plugin add dext-codex-connector@dext-codex-connector
 ```
 
-Start a new Codex task after installation so the `dext` tools are loaded. Confirm the safety boundary with `connection_status`; it must report `providerMode: fixture` and `liveDextRequestsEnabled: false`.
+Start a new Codex task and verify `connection_status` reports fixture mode. It should contain only Northstar Studio Ltd, Harbor Goods Ltd, and Orchard Labs Ltd.
 
-See [Codex plugin installation and lifecycle](docs/codex-plugin.md) for upgrades, uninstall, rollback, privacy, and local development details.
+See [Codex plugin lifecycle](docs/codex-plugin.md) for upgrade, uninstall, migration, and rollback.
 
-## Implemented surface
+## Local hosted-service development
 
-| Area | State |
-| --- | --- |
-| Native Codex plugin and marketplace | Implemented; fixture-only beta |
-| Self-contained stdio MCP bundle | Implemented; Node 24, no `node_modules` required |
-| Streamable HTTP MCP at `/mcp` | Implemented |
-| OAuth bearer verification and protected-resource metadata | Implemented; production needs an organization identity provider |
-| Development bearer authentication | Implemented; rejected in production |
-| Data Health endpoint adapter | Implemented for the 3 public contracts |
-| Fixture provider | Implemented and enabled by default |
-| Standard `search` and `fetch` | Implemented with exact text-only result shapes |
-| Direct Data Health tools | Implemented |
-| Portfolio, risk, and client comparison | Implemented |
-| Tenant-scoped connections, credentials, snapshots, links, identities, and audit | Implemented in memory where safe and PostgreSQL for production |
-| Audit events and 60-request fixed-window limit | Implemented |
-| Stable authenticated record links | Implemented as short opaque UUID links |
-| PostgreSQL storage and row-level security | Implemented with tenant-integrity migration and forced RLS |
-| Commerce | 33 contracts catalogued; no tools or live adapter registered |
-| Prepare | Disabled pending first-party partner contracts |
-| Custom Apps SDK UI | Not included; Codex uses the native plugin/tool experience |
-
-Registered tools:
-
-- `connection_status`, `list_capabilities`
-- `search`, `fetch`
-- `list_clients`, `get_client`, `get_client_activity_stats`
-- `summarize_portfolio_health`, `find_client_health_risks`, `compare_clients`
-- `snapshot_health_metrics`, `compare_health_snapshots`
-
-## Safety boundaries
-
-- The installed Codex plugin always constructs the fixture provider and in-memory repositories directly.
-- Plugin behavior cannot be changed by `DEXT_DATA_SOURCE`, database, credential, or production-mode environment variables.
-- The plugin bundle excludes the Dext HTTP adapter, PostgreSQL driver, Fastify, and credential decryption code.
-- `DEXT_DATA_SOURCE` defaults to `fixture`.
-- Tests reject `DEXT_DATA_SOURCE=live` even if the live flag is set.
-- Live mode requires the explicit live flag, PostgreSQL, a tenant connection, and an envelope-encrypted credential stored for that connection.
-- There is no global Dext token environment variable or fallback connection.
-- The live adapter accepts only `https://api.precision.dext.com/`.
-- Commerce and Prepare tools are not registered.
-- Authentication and scope checks run before tool execution.
-- Audit records contain tool names, actors, outcomes, and target IDs—not tool payloads or credentials.
-- Record links contain only a random UUID; resolution is authenticated and bound to both tenant and upstream connection.
-- Development authentication is invalid when `NODE_ENV=production`.
-- Production additionally requires hosted OAuth, a public HTTPS origin, PostgreSQL, a non-loopback bind address, a credential master key, and a dedicated cursor key.
-
-Do not use a personal or company Dext token for development. Provider testing belongs in a dedicated Dext test tenant or Commerce sandbox.
-
-## Local HTTP fixture service
-
-This is a development path for the separate HTTP service, not the normal Codex plugin installation. It requires Node 24 and pnpm 11.9.0.
+Node.js 24 and pnpm 11.9.0 are required for repository development:
 
 ```powershell
 Copy-Item .env.example .env
@@ -84,53 +79,49 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-The service exposes:
+The safe defaults use fictional data, memory storage, and a local development bearer. The service exposes:
 
 - `http://localhost:3000/healthz`
 - `http://localhost:3000/mcp`
 - `http://localhost:3000/.well-known/oauth-protected-resource`
+- `http://localhost:3000/api/connections`
 
-Use the bearer token from the local `.env` only for fixture-mode development. For MCP Inspector, connect to `/mcp` and send `Authorization: Bearer <local development token>`.
+Never enable live mode with the company account. Real validation belongs only in an isolated Dext test tenant or the Dext Commerce sandbox.
 
 ## Validation
 
 ```powershell
 pnpm check
+python C:\Users\cesar\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py .
 ```
 
-The suite covers plugin manifest and marketplace validation, deterministic bundle synchronization, stdio process startup from an unrelated directory, all twelve tools under hostile live-mode environment values, ephemeral snapshots, package contents, configuration gates, envelope decryption, opaque cursor and permalink isolation, bounded risk/portfolio scans, schema drift tolerance, rate limiting, tenant-scoped providers and snapshots, mocked HTTP authorization, the 33-contract Commerce catalog, canonical MCP security declarations, exact `search`/`fetch` shapes, audit redaction, OAuth challenges, CORS, and unauthenticated rejection.
+The suite uses fictional providers, mocked Dext HTTP responses, in-memory MCP transports, local sockets, and an optional loopback PostgreSQL test database whose name must contain `test`. No test authenticates to Dext or performs an upstream network request.
 
-No test contacts Dext. When `TEST_DATABASE_URL` points to a loopback database whose name contains `test`, integration tests apply both migrations and prove cross-tenant foreign keys and row-level security. CI supplies such a PostgreSQL 17 service. Docker packaging validation also builds an isolated canary image and checks its history, layers, and filesystem; it requires a running Docker daemon.
+Coverage includes exact `search`/`fetch` shapes, all tool schemas and annotations, OAuth challenges, user-owned provider resolution, credential encryption, redaction, Commerce invoice filters and pagination, Data Health schema drift, bounded rate and risk scans, RLS, plugin isolation, hostile environment variables, packaging, and release drift.
 
 Useful focused checks:
 
 ```powershell
+pnpm test:unit
 pnpm test:integration
-pnpm test:packaging:static
-pnpm test:packaging:docker
+pnpm test:security
 pnpm check:plugin
 pnpm audit --prod
 ```
 
-The official local Codex plugin validator can also be run with:
+## Hosted deployment and release
+
+Deployment requires a real public HTTPS origin, OAuth authorization-server registration, PostgreSQL 17, secret management, telemetry redaction, and isolated provider credentials. Apply all three migrations in order. Commerce remains off until its sandbox runbook passes.
+
+After the deployed endpoint passes OAuth and MCP acceptance, convert the plugin manifest:
 
 ```powershell
-python C:\Users\cesar\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py .
+pnpm plugin:prepare-hosted -- --url https://<real-host>/mcp
+pnpm check:plugin
+pnpm release:verify-hosted
+pnpm release:verify-hosted -- --network
 ```
 
-## Production prerequisites
+The last command fails for placeholders, localhost, IP literals, non-HTTPS URLs, paths other than `/mcp`, or any stdio fallback. A `v0.2.0-beta.1` tag must not be created until this check and isolated live acceptance pass.
 
-Before enabling a real Dext connection:
-
-1. Obtain a dedicated Data Health credential for an isolated, non-company Dext test tenant.
-2. Configure an OAuth 2.1 identity provider and provision external subject/tenant mappings plus membership grants.
-3. Apply `migrations/0001_foundation.sql` and `migrations/0002_tenant_integrity.sql` as the migration owner. Run the service through a login role granted the non-owner `dext_connector_app` role.
-4. Provision one active Data Health connection per tenant and store its token using envelope encryption. Supply the 32-byte base64url `CREDENTIAL_MASTER_KEY` from a secret manager.
-5. Set a separate random `CURSOR_ENCRYPTION_KEY`, configure backups/retention, and verify structured telemetry redaction.
-6. Run PostgreSQL, Docker canary, MCP Inspector, Codex, and ChatGPT checks against isolated staging.
-7. Enable `DEXT_DATA_SOURCE=live` and `DEXT_LIVE_REQUESTS_ENABLED=true` only for the approved isolated connection.
-8. Keep Commerce disabled until Dext sandbox tests prove the endpoints used by each tool group.
-
-Risk searches that require client details consume at most `RISK_DETAIL_REQUEST_BUDGET` detail requests per page and return an opaque continuation cursor when more candidates remain. Summary-only filters make no detail calls. Portfolio summaries inspect at most 20 deterministically selected clients and keep structured output below the connector's 64 KiB bound.
-
-See [Security and data handling](docs/security-and-data-handling.md), [provider validation](docs/provider-validation.md), and [module release gates](docs/module-release-gates.md).
+See [Hosted deployment](docs/hosted-deployment.md), [Provider validation](docs/provider-validation.md), and [Module release gates](docs/module-release-gates.md).

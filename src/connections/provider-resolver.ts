@@ -8,7 +8,10 @@ export interface ResolvedDextHealthProvider {
 
 export interface DextHealthProviderResolver {
   readonly configuredMode: DextHealthProvider["mode"];
-  resolve(tenantId: string): Promise<ResolvedDextHealthProvider>;
+  resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextHealthProvider>;
 }
 
 export class StaticDextHealthProviderResolver
@@ -25,7 +28,11 @@ export class StaticDextHealthProviderResolver
     this.tenantProviders = new Map([["*", provider], ...tenantProviders]);
   }
 
-  async resolve(tenantId: string): Promise<ResolvedDextHealthProvider> {
+  async resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextHealthProvider> {
+    void userId;
     const provider =
       this.tenantProviders.get(tenantId) ?? this.tenantProviders.get("*");
     if (!provider) {

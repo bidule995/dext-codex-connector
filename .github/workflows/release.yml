@@ -50,16 +50,17 @@ jobs:
       - name: Verify version and release checks
         run: |
           node scripts/verify-release-version.mjs "$GITHUB_REF_NAME"
+          pnpm release:verify-hosted -- --network
           pnpm check
       - name: Build release archive and checksums
         run: |
           mkdir -p release
           pnpm pack --pack-destination release
           tar -czf "release/dext-codex-plugin-${GITHUB_REF_NAME}.tar.gz" \
-            .agents .codex-plugin .mcp.json assets plugin/runtime \
+            .agents .codex-plugin .mcp.json assets \
             LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md
           zip -qr "release/dext-codex-plugin-${GITHUB_REF_NAME}.zip" \
-            .agents .codex-plugin .mcp.json assets plugin/runtime \
+            .agents .codex-plugin .mcp.json assets \
             LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md
           cd release
           sha256sum -- *.tgz *.tar.gz *.zip > SHA256SUMS.txt

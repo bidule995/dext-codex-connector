@@ -6,17 +6,17 @@ The connector has separate credentials for the MCP client and Dext. An OAuth acc
 
 Local development uses a fixed bearer token and fictional records. Production rejects this authentication mode.
 
-## Tenant isolation
+## Tenant and user isolation
 
-Every service and repository operation receives the tenant from verified authentication context. OAuth claims are mapped to internal tenant and user IDs; requested scopes are intersected with stored membership grants. Stable Dext record IDs do not encode a tenant. Opaque UUID record links are stored with tenant, connection, and record ownership, and the route checks the authenticated tenant again.
+Every provider, snapshot, and permalink operation receives both tenant and user from verified authentication context. OAuth claims are mapped to internal tenant and user IDs; requested scopes are intersected with stored membership grants. Stable Dext record IDs encode neither principal. Opaque UUID record links are stored against a user-owned connection, and the route checks the authenticated tenant and user again.
 
-Both migrations carry or repair composite tenant ownership, including credentials-to-connections, snapshots-to-connections, snapshot clients-to-snapshots, job attempts-to-jobs, actors-to-memberships, and permalinks-to-connections. Row-level security is enabled and forced on tenant tables. The service uses tenant-scoped transactions that set `app.tenant_id`; the non-owner `dext_connector_app` role cannot bypass those policies. The integration test applies the migrations to an explicitly named loopback test database and proves both cross-tenant foreign-key rejection and RLS visibility.
+The three migrations carry or repair composite tenant ownership and add `owner_user_id` to upstream connections. Row-level security is enabled and forced. Principal-owned operations set both `app.tenant_id` and `app.user_id`; connection, credential, snapshot, snapshot-client, and permalink policies resolve through that user-owned connection. The non-owner `dext_connector_app` role cannot bypass those policies. The integration test applies all migrations to an explicitly named loopback test database and proves cross-tenant foreign-key rejection plus same-tenant, cross-user RLS isolation.
 
 ## Credentials
 
 The schema stores ciphertext, encrypted data key, credential nonce and authentication tag, algorithm version, and key reference. The runtime decrypts a per-connection data key and then the credential with AES-256-GCM; decrypted key material is cleared after use. A managed KMS should wrap the 32-byte base64url master key in hosted deployments. Plain Dext tokens must not be stored in database columns.
 
-The current live Data Health resolver selects an active connection by authenticated tenant, loads only that tenant/connection credential, and constructs the provider for that resolution. A shared limiter is keyed by tenant and connection. There is no process-wide Dext token or cross-tenant fallback.
+The live resolvers select an active connection by authenticated tenant, user, and module, load only that connection's credential, and construct the provider for that resolution. Shared limiters are keyed by tenant, user, and connection. There is no process-wide Dext token or cross-principal fallback. Credential submission is available only through the authenticated HTTPS connection API described in `docs/connection-api.md`, never as an MCP tool.
 
 ## Audit and redaction
 
@@ -34,7 +34,7 @@ Every protected tool publishes a canonical top-level `securitySchemes` declarati
 
 Pagination cursors are authenticated opaque ciphertext bound to tenant, connection, and filter hash. Changing any of those inputs invalidates the cursor instead of allowing it to cross a security boundary.
 
-Commerce production and sandbox need separate credentials and egress destinations. They remain unimplemented until sandbox access is available.
+Commerce production and sandbox use separate credentials and exact egress destinations. The read adapter is implemented but disabled by default until sandbox evidence is available; all mutation, extraction, connection, synchronization, and export endpoints remain absent from MCP.
 
 ## Write safety
 

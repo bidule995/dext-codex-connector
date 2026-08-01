@@ -22,13 +22,18 @@ export class LiveDextHealthProviderResolver
     private readonly decryptor: CredentialDecryptor
   ) {}
 
-  async resolve(tenantId: string): Promise<ResolvedDextHealthProvider> {
+  async resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextHealthProvider> {
     const connection = await this.connections.getActiveForModule(
       tenantId,
+      userId,
       "data_health"
     );
     const credential = await this.credentials.getActiveForConnection(
       tenantId,
+      userId,
       connection.id
     );
     const token = await this.decryptor.decrypt(credential);
@@ -36,7 +41,7 @@ export class LiveDextHealthProviderResolver
       connectionId: connection.id,
       provider: new DextHealthHttpProvider({
         token,
-        connectionKey: `${tenantId}:${connection.id}`,
+        connectionKey: `${tenantId}:${userId}:${connection.id}`,
         rateLimiter: this.limiter
       })
     };

@@ -23048,11 +23048,13 @@ var StdioServerTransport = class {
 };
 
 // src/version.ts
-var CONNECTOR_VERSION = "0.1.0-beta.2";
+var CONNECTOR_VERSION = "0.2.0-beta.1";
 
 // src/auth/types.ts
 var ConnectorScopes = {
   ConnectorRead: "connector.read",
+  RecordsRead: "records.read",
+  ConnectionsWrite: "connections.write",
   HealthRead: "health.read",
   HealthSnapshotsWrite: "health.snapshots.write",
   CommerceRead: "commerce.read",
@@ -23137,6 +23139,49 @@ var DextClientActivityStatsSchema = external_exports.object({
 }).loose();
 var DextClientListSchema = external_exports.array(DextClientSummarySchema);
 
+// src/contracts/dext-commerce.ts
+var MoneySchema = external_exports.number().finite();
+var DextCommerceItemSchema = external_exports.object({
+  name: external_exports.string().optional(),
+  quantity: external_exports.number().finite().optional(),
+  unit_price: MoneySchema.optional(),
+  amount: MoneySchema.optional()
+}).passthrough();
+var DextCommerceTransactionSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  type: external_exports.string().min(1),
+  currency_code: external_exports.string().optional(),
+  reference_id: external_exports.string().nullable().optional(),
+  account_id: external_exports.string().optional(),
+  transacted_at: external_exports.string().optional(),
+  created_at: external_exports.string().optional(),
+  updated_at: external_exports.string().optional(),
+  items: external_exports.array(DextCommerceItemSchema).optional(),
+  totals: external_exports.object({
+    sub: MoneySchema.optional(),
+    tax: MoneySchema.optional(),
+    grand: MoneySchema.optional()
+  }).passthrough().optional(),
+  payments: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())).optional(),
+  deposits: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())).optional(),
+  attachments: external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown())).optional(),
+  attributes: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+}).passthrough();
+var DextCommerceListResponseSchema = external_exports.object({
+  pagination: external_exports.object({
+    count: external_exports.number().int().min(0),
+    total_count: external_exports.number().int().min(0).optional(),
+    next: external_exports.string().optional()
+  }),
+  values: external_exports.array(DextCommerceTransactionSchema)
+});
+var DextCommerceGetResponseSchema = external_exports.object({
+  value: DextCommerceTransactionSchema
+});
+var DextCommerceCurrentUserResponseSchema = external_exports.object({
+  value: external_exports.object({ id: external_exports.string().min(1) }).passthrough()
+});
+
 // src/contracts/tool-schemas.ts
 var EmptyInputSchema = {};
 var SearchInputSchema = {
@@ -23177,9 +23222,30 @@ var CompareSnapshotsInputSchema = {
   earlierSnapshotId: external_exports.string().trim().min(1).max(200),
   laterSnapshotId: external_exports.string().trim().min(1).max(200)
 };
+var ListInvoicesInputSchema = {
+  direction: external_exports.enum(["sales", "purchases", "all"]).default("all"),
+  query: external_exports.string().trim().max(200).optional(),
+  accountIds: external_exports.array(external_exports.string().trim().min(1).max(200)).max(50).optional(),
+  minTransactedAt: external_exports.iso.datetime({ offset: true }).optional(),
+  maxTransactedAt: external_exports.iso.datetime({ offset: true }).optional(),
+  limit: external_exports.number().int().min(1).max(100).default(50),
+  cursor: external_exports.string().trim().min(1).max(2e3).optional()
+};
+var GetInvoiceInputSchema = {
+  transactionId: external_exports.string().trim().min(1).max(200)
+};
 var ConnectionStatusOutputSchema = {
   providerMode: external_exports.enum(["fixture", "live", "disabled"]),
   liveDextRequestsEnabled: external_exports.boolean(),
+  connections: external_exports.array(
+    external_exports.object({
+      module: external_exports.enum(["data_health", "commerce"]),
+      environment: external_exports.enum(["sandbox", "production"]),
+      label: external_exports.string(),
+      state: external_exports.enum(["active", "pending", "invalid", "disconnected"]),
+      validatedAt: external_exports.string().optional()
+    })
+  ),
   modules: external_exports.record(external_exports.string(), external_exports.unknown())
 };
 var CapabilitiesOutputSchema = {
@@ -23262,6 +23328,17 @@ var CompareSnapshotsOutputSchema = {
     })
   ),
   formulaVersion: external_exports.string()
+};
+var ListInvoicesOutputSchema = {
+  transactions: external_exports.array(DextCommerceTransactionSchema),
+  count: external_exports.number().int().min(0),
+  totalCount: external_exports.number().int().min(0).optional(),
+  nextCursor: external_exports.string().optional(),
+  asOf: external_exports.string()
+};
+var GetInvoiceOutputSchema = {
+  invoice: DextCommerceTransactionSchema,
+  asOf: external_exports.string()
 };
 
 // src/errors.ts
@@ -31407,7 +31484,10 @@ function registerCoreTools(server2, dependencies2, auth) {
         resourceMetadataUrl: dependencies2.resourceMetadataUrl
       },
       async () => structuredResult(
-        await dependencies2.capabilities.connectionStatus(auth.tenantId)
+        await dependencies2.capabilities.connectionStatus(
+          auth.tenantId,
+          auth.userId
+        )
       )
     )
   );
@@ -31434,8 +31514,72 @@ function registerCoreTools(server2, dependencies2, auth) {
   );
 }
 
-// src/mcp/register-health-tools.ts
+// src/mcp/register-commerce-tools.ts
 var upstreamReadAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+function registerCommerceTools(server2, dependencies2, auth) {
+  const commerce = dependencies2.commerce;
+  if (!commerce) return;
+  const common = {
+    auth,
+    audit: dependencies2.audit,
+    requiredScope: ConnectorScopes.CommerceRead,
+    resourceMetadataUrl: dependencies2.resourceMetadataUrl
+  };
+  server2.registerTool(
+    "list_invoices",
+    {
+      title: "List Dext Commerce invoices",
+      description: "Use this when you need a bounded page of sales invoices or purchase bills from the current user's Dext Commerce connection.",
+      inputSchema: ListInvoicesInputSchema,
+      outputSchema: ListInvoicesOutputSchema,
+      annotations: upstreamReadAnnotations,
+      ...toolSecurity(ConnectorScopes.CommerceRead)
+    },
+    async (input) => executeTool(
+      { ...common, tool: "list_invoices" },
+      async () => structuredResult(
+        await commerce.listInvoices(auth.tenantId, auth.userId, {
+          direction: input.direction,
+          limit: input.limit,
+          ...input.cursor === void 0 ? {} : { cursor: input.cursor },
+          ...input.query === void 0 ? {} : { query: input.query },
+          ...input.accountIds === void 0 ? {} : { accountIds: input.accountIds },
+          ...input.minTransactedAt === void 0 ? {} : { minTransactedAt: input.minTransactedAt },
+          ...input.maxTransactedAt === void 0 ? {} : { maxTransactedAt: input.maxTransactedAt }
+        })
+      )
+    )
+  );
+  server2.registerTool(
+    "get_invoice",
+    {
+      title: "Get a Dext Commerce invoice",
+      description: "Use this when you need the normalized details of one known Dext Commerce invoice or bill transaction.",
+      inputSchema: GetInvoiceInputSchema,
+      outputSchema: GetInvoiceOutputSchema,
+      annotations: upstreamReadAnnotations,
+      ...toolSecurity(ConnectorScopes.CommerceRead)
+    },
+    async ({ transactionId }) => executeTool(
+      { ...common, tool: "get_invoice", targetIds: [transactionId] },
+      async () => structuredResult(
+        await commerce.getInvoice(
+          auth.tenantId,
+          auth.userId,
+          transactionId
+        )
+      )
+    )
+  );
+}
+
+// src/mcp/register-health-tools.ts
+var upstreamReadAnnotations2 = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -31455,51 +31599,19 @@ function registerHealthTools(server2, dependencies2, auth) {
     resourceMetadataUrl: dependencies2.resourceMetadataUrl
   };
   server2.registerTool(
-    "search",
-    {
-      title: "Search Dext records",
-      description: "Use this when you need to find Dext Data Health client records by name, identifier, practice code, or alert level.",
-      inputSchema: SearchInputSchema,
-      annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
-    },
-    async ({ query }) => executeTool(
-      { ...common, tool: "search" },
-      async () => jsonTextResult({
-        results: await dependencies2.health.search(auth.tenantId, query)
-      })
-    )
-  );
-  server2.registerTool(
-    "fetch",
-    {
-      title: "Fetch a Dext record",
-      description: "Use this when you have a Dext connector record ID and need its complete searchable text and metadata.",
-      inputSchema: FetchInputSchema,
-      annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
-    },
-    async ({ id }) => executeTool(
-      { ...common, tool: "fetch", targetIds: [id] },
-      async () => jsonTextResult(
-        await dependencies2.health.fetchRecord(auth.tenantId, id)
-      )
-    )
-  );
-  server2.registerTool(
     "list_clients",
     {
       title: "List Dext Data Health clients",
       description: "Use this when you need a bounded, filterable list of clients visible to the current Dext connection.",
       inputSchema: ListClientsInputSchema,
       outputSchema: ListClientsOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ query, alertLevels, limit }) => executeTool(
       { ...common, tool: "list_clients" },
       async () => structuredResult(
-        await dependencies2.health.listClients(auth.tenantId, {
+        await dependencies2.health.listClients(auth.tenantId, auth.userId, {
           limit,
           ...query === void 0 ? {} : { query },
           ...alertLevels === void 0 ? {} : { alertLevels }
@@ -31514,13 +31626,17 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need the detailed Data Health profile for one known Dext client ID.",
       inputSchema: ClientIdInputSchema,
       outputSchema: GetClientOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ clientId }) => executeTool(
       { ...common, tool: "get_client", targetIds: [clientId] },
       async () => structuredResult(
-        await dependencies2.health.getClient(auth.tenantId, clientId)
+        await dependencies2.health.getClient(
+          auth.tenantId,
+          auth.userId,
+          clientId
+        )
       )
     )
   );
@@ -31531,7 +31647,7 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need annual, monthly-average, and quarterly-average activity statistics for one Dext client.",
       inputSchema: ClientIdInputSchema,
       outputSchema: ClientActivityOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ clientId }) => executeTool(
@@ -31543,6 +31659,7 @@ function registerHealthTools(server2, dependencies2, auth) {
       async () => structuredResult(
         await dependencies2.health.getClientActivityStats(
           auth.tenantId,
+          auth.userId,
           clientId
         )
       )
@@ -31555,16 +31672,20 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need aggregate Data Health counts and scores across the connected client portfolio.",
       inputSchema: SummarizePortfolioInputSchema,
       outputSchema: PortfolioOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ alertLevels, healthScoreBelow }) => executeTool(
       { ...common, tool: "summarize_portfolio_health" },
       async () => structuredResult(
-        await dependencies2.health.summarizePortfolio(auth.tenantId, {
-          ...alertLevels === void 0 ? {} : { alertLevels },
-          ...healthScoreBelow === void 0 ? {} : { healthScoreBelow }
-        }),
+        await dependencies2.health.summarizePortfolio(
+          auth.tenantId,
+          auth.userId,
+          {
+            ...alertLevels === void 0 ? {} : { alertLevels },
+            ...healthScoreBelow === void 0 ? {} : { healthScoreBelow }
+          }
+        ),
         "Returned aggregate portfolio health with a bounded client sample."
       )
     )
@@ -31576,13 +31697,13 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need clients matching explicit Data Health, debtor, HMRC, or manual-feed risk thresholds.",
       inputSchema: FindHealthRisksInputSchema,
       outputSchema: RiskOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async (input) => executeTool(
       { ...common, tool: "find_client_health_risks" },
       async () => structuredResult(
-        await dependencies2.health.findRisks(auth.tenantId, {
+        await dependencies2.health.findRisks(auth.tenantId, auth.userId, {
           healthScoreAtOrBelow: input.healthScoreAtOrBelow,
           requireHmrcConnected: input.requireHmrcConnected,
           limit: input.limit,
@@ -31604,13 +31725,17 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need a side-by-side Data Health and activity comparison for two or more known client IDs.",
       inputSchema: CompareClientsInputSchema,
       outputSchema: CompareClientsOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ clientIds }) => executeTool(
       { ...common, tool: "compare_clients", targetIds: clientIds },
       async () => structuredResult(
-        await dependencies2.health.compareClients(auth.tenantId, clientIds)
+        await dependencies2.health.compareClients(
+          auth.tenantId,
+          auth.userId,
+          clientIds
+        )
       )
     )
   );
@@ -31633,7 +31758,11 @@ function registerHealthTools(server2, dependencies2, auth) {
         resourceMetadataUrl: dependencies2.resourceMetadataUrl
       },
       async () => structuredResult(
-        await dependencies2.health.takeSnapshot(auth.tenantId, snapshotKey)
+        await dependencies2.health.takeSnapshot(
+          auth.tenantId,
+          auth.userId,
+          snapshotKey
+        )
       )
     )
   );
@@ -31644,7 +31773,7 @@ function registerHealthTools(server2, dependencies2, auth) {
       description: "Use this when you need added, removed, or health-changed clients between two connector snapshots.",
       inputSchema: CompareSnapshotsInputSchema,
       outputSchema: CompareSnapshotsOutputSchema,
-      annotations: upstreamReadAnnotations,
+      annotations: upstreamReadAnnotations2,
       ...toolSecurity(ConnectorScopes.HealthRead)
     },
     async ({ earlierSnapshotId, laterSnapshotId }) => executeTool(
@@ -31656,8 +31785,65 @@ function registerHealthTools(server2, dependencies2, auth) {
       async () => structuredResult(
         await dependencies2.health.compareSnapshots(
           auth.tenantId,
+          auth.userId,
           earlierSnapshotId,
           laterSnapshotId
+        )
+      )
+    )
+  );
+}
+
+// src/mcp/register-record-tools.ts
+var upstreamReadAnnotations3 = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+function registerRecordTools(server2, dependencies2, auth) {
+  const common = {
+    auth,
+    audit: dependencies2.audit,
+    requiredScope: ConnectorScopes.RecordsRead,
+    resourceMetadataUrl: dependencies2.resourceMetadataUrl
+  };
+  server2.registerTool(
+    "search",
+    {
+      title: "Search Dext records",
+      description: "Use this when you need to find records across the Dext modules connected by the current user.",
+      inputSchema: SearchInputSchema,
+      annotations: upstreamReadAnnotations3,
+      ...toolSecurity(ConnectorScopes.RecordsRead)
+    },
+    async ({ query }) => executeTool(
+      { ...common, tool: "search" },
+      async () => jsonTextResult({
+        results: await dependencies2.records.search(
+          auth.tenantId,
+          auth.userId,
+          query
+        )
+      })
+    )
+  );
+  server2.registerTool(
+    "fetch",
+    {
+      title: "Fetch a Dext record",
+      description: "Use this when you have a Dext connector record ID and need its complete searchable text and metadata.",
+      inputSchema: FetchInputSchema,
+      annotations: upstreamReadAnnotations3,
+      ...toolSecurity(ConnectorScopes.RecordsRead)
+    },
+    async ({ id }) => executeTool(
+      { ...common, tool: "fetch", targetIds: [id] },
+      async () => jsonTextResult(
+        await dependencies2.records.fetchRecord(
+          auth.tenantId,
+          auth.userId,
+          id
         )
       )
     )
@@ -31670,12 +31856,14 @@ function createMcpServer(dependencies2, auth) {
     name: "dext-codex-connector",
     version: CONNECTOR_VERSION
   }, {
-    instructions: "Use search to find Dext records and fetch to retrieve one record. Read current state before any future write or deletion. Never ask for Dext tokens, passwords, banking credentials, session cookies, or two-factor codes in conversation. Commerce and Prepare are unavailable until their provider gates pass."
+    instructions: "Use search to find Dext records and fetch to retrieve one record. Use list_invoices only when the hosted deployment enables its reviewed Commerce provider. Never ask for Dext API keys, personal access tokens, passwords, banking credentials, session cookies, or two-factor codes in conversation; credentials belong only in the authenticated HTTPS connection API. Prepare remains unavailable until Dext supplies a first-party contract."
   });
   registerCoreTools(server2, dependencies2, auth);
+  registerRecordTools(server2, dependencies2, auth);
   if (dependencies2.health.providerMode !== "disabled") {
     registerHealthTools(server2, dependencies2, auth);
   }
+  registerCommerceTools(server2, dependencies2, auth);
   return server2;
 }
 
@@ -31687,7 +31875,8 @@ var StaticDextHealthProviderResolver = class {
     this.configuredMode = provider.mode;
     this.tenantProviders = new Map([["*", provider], ...tenantProviders]);
   }
-  async resolve(tenantId) {
+  async resolve(tenantId, userId) {
+    void userId;
     const provider = this.tenantProviders.get(tenantId) ?? this.tenantProviders.get("*");
     if (!provider) {
       throw new ConnectorError({
@@ -31871,6 +32060,17 @@ var FixtureDextHealthProvider = class {
   }
 };
 
+// src/connections/connection-service.ts
+function publicConnection(connection) {
+  return {
+    module: connection.module,
+    environment: connection.environment,
+    label: connection.label,
+    state: connection.state,
+    ...connection.validatedAt === void 0 ? {} : { validatedAt: connection.validatedAt }
+  };
+}
+
 // src/providers/dext-commerce/catalog.ts
 var CommerceEndpointCatalog = [
   { name: "getCurrentUser", method: "GET", path: "/v2/users/me", mutates: false, destructive: false },
@@ -31916,39 +32116,56 @@ var PrepareModuleStatus = {
 
 // src/services/capability-service.ts
 var CapabilityService = class {
-  constructor(config2, health) {
+  constructor(config2, health, commerce, connections) {
     this.config = config2;
     this.health = health;
+    this.commerce = commerce;
+    this.connections = connections;
   }
   config;
   health;
-  async connectionStatus(tenantId) {
-    const healthStatus = await this.health.connectionStatus(tenantId);
+  commerce;
+  connections;
+  async connectionStatus(tenantId, userId) {
+    const connections = this.connections ? await this.connections.list(tenantId, userId) : [];
+    const activeModules = new Set(
+      connections.filter(({ state }) => state === "active").map(({ module }) => module)
+    );
+    const fixtureHealth = this.health.providerMode === "fixture";
+    const liveHealth = this.health.providerMode === "live" && activeModules.has("data_health");
+    const commerceConnected = this.commerce !== void 0 && activeModules.has("commerce");
     return {
-      providerMode: healthStatus.mode,
+      providerMode: this.health.providerMode,
       liveDextRequestsEnabled: this.config.liveDextRequestsEnabled,
+      connections: connections.map(publicConnection),
       modules: {
         dataHealth: {
-          enabled: healthStatus.enabled,
-          mode: healthStatus.mode,
+          enabled: fixtureHealth || liveHealth,
+          connected: fixtureHealth || liveHealth,
+          mode: this.health.providerMode,
           endpointContracts: 3
         },
         commerce: {
-          enabled: false,
+          enabled: this.commerce !== void 0,
+          connected: commerceConnected,
           endpointContracts: CommerceEndpointCatalog.length,
-          reason: "Commerce tools stay disabled until sandbox credentials and contract tests are available."
+          ...!this.config.commerceEnabled ? {
+            reason: "Commerce is disabled until the deployment explicitly enables its reviewed read-only provider."
+          } : commerceConnected ? {} : { reason: "The current user has no active Commerce connection." }
         },
         prepare: PrepareModuleStatus
       }
     };
   }
   listCapabilities() {
-    return {
-      enabledTools: this.health.providerMode === "disabled" ? ["connection_status", "list_capabilities"] : [
-        "connection_status",
-        "list_capabilities",
-        "search",
-        "fetch",
+    const enabledTools = [
+      "connection_status",
+      "list_capabilities",
+      "search",
+      "fetch"
+    ];
+    if (this.health.providerMode !== "disabled") {
+      enabledTools.push(
         "list_clients",
         "get_client",
         "get_client_activity_stats",
@@ -31957,9 +32174,15 @@ var CapabilityService = class {
         "compare_clients",
         "snapshot_health_metrics",
         "compare_health_snapshots"
-      ],
+      );
+    }
+    if (this.commerce) enabledTools.push("list_invoices", "get_invoice");
+    return {
+      enabledTools,
       disabledModules: {
-        commerce: "Sandbox credentials and contract tests are required before tool registration.",
+        ...this.commerce ? {} : {
+          commerce: "Enable the reviewed Commerce provider and provision a sandbox/test connection."
+        },
         prepare: PrepareModuleStatus.reason
       }
     };
@@ -32044,12 +32267,12 @@ var HealthService = class {
   get providerMode() {
     return this.providers.configuredMode;
   }
-  async connectionStatus(tenantId) {
-    const resolved = await this.providers.resolve(tenantId);
+  async connectionStatus(tenantId, userId) {
+    const resolved = await this.providers.resolve(tenantId, userId);
     return { enabled: resolved.provider.mode !== "disabled", mode: resolved.provider.mode };
   }
-  async listClients(tenantId, options) {
-    const { provider } = await this.providers.resolve(tenantId);
+  async listClients(tenantId, userId, options) {
+    const { provider } = await this.providers.resolve(tenantId, userId);
     let clients2 = await provider.listClients();
     if (options.query) {
       const query = options.query.toLocaleLowerCase();
@@ -32074,23 +32297,23 @@ var HealthService = class {
       asOf: this.now().toISOString()
     };
   }
-  async getClient(tenantId, clientId) {
-    const { provider } = await this.providers.resolve(tenantId);
+  async getClient(tenantId, userId, clientId) {
+    const { provider } = await this.providers.resolve(tenantId, userId);
     return {
       client: await provider.getClient(clientId),
       asOf: this.now().toISOString()
     };
   }
-  async getClientActivityStats(tenantId, clientId) {
-    const { provider } = await this.providers.resolve(tenantId);
+  async getClientActivityStats(tenantId, userId, clientId) {
+    const { provider } = await this.providers.resolve(tenantId, userId);
     return {
       clientId,
       activity: await provider.getClientActivityStats(clientId),
       asOf: this.now().toISOString()
     };
   }
-  async summarizePortfolio(tenantId, options) {
-    const { provider } = await this.providers.resolve(tenantId);
+  async summarizePortfolio(tenantId, userId, options) {
+    const { provider } = await this.providers.resolve(tenantId, userId);
     let clients2 = await provider.listClients();
     if (options.alertLevels?.length) {
       const levels = new Set(
@@ -32131,8 +32354,11 @@ var HealthService = class {
     }
     return result;
   }
-  async findRisks(tenantId, options) {
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+  async findRisks(tenantId, userId, options) {
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const summaries = (await provider.listClients()).sort(
       (left, right) => left.id.localeCompare(right.id)
     );
@@ -32206,7 +32432,7 @@ var HealthService = class {
       asOf: this.now().toISOString()
     };
   }
-  async compareClients(tenantId, clientIds) {
+  async compareClients(tenantId, userId, clientIds) {
     const uniqueIds = [...new Set(clientIds)];
     if (uniqueIds.length !== clientIds.length) {
       throw new ConnectorError({
@@ -32214,7 +32440,7 @@ var HealthService = class {
         message: "Client comparison requires unique client IDs."
       });
     }
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     const clients2 = [];
     for (const clientId of uniqueIds) {
       clients2.push({
@@ -32228,11 +32454,15 @@ var HealthService = class {
       asOf: this.now().toISOString()
     };
   }
-  async takeSnapshot(tenantId, snapshotKey) {
+  async takeSnapshot(tenantId, userId, snapshotKey) {
     const asOf = this.now().toISOString();
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const snapshot = await this.snapshots.create({
       tenantId,
+      ownerUserId: userId,
       connectionId,
       snapshotKey: snapshotKey ?? asOf.slice(0, 10),
       asOf,
@@ -32247,9 +32477,17 @@ var HealthService = class {
       clientCount: snapshot.clients.length
     };
   }
-  async compareSnapshots(tenantId, earlierSnapshotId, laterSnapshotId) {
-    const earlier = await this.snapshots.get(tenantId, earlierSnapshotId);
-    const later = await this.snapshots.get(tenantId, laterSnapshotId);
+  async compareSnapshots(tenantId, userId, earlierSnapshotId, laterSnapshotId) {
+    const earlier = await this.snapshots.get(
+      tenantId,
+      userId,
+      earlierSnapshotId
+    );
+    const later = await this.snapshots.get(
+      tenantId,
+      userId,
+      laterSnapshotId
+    );
     const earlierById = new Map(earlier.clients.map((client) => [client.id, client]));
     const laterById = new Map(later.clients.map((client) => [client.id, client]));
     const added = later.clients.filter((client) => !earlierById.has(client.id));
@@ -32277,9 +32515,12 @@ var HealthService = class {
       formulaVersion: FormulaVersion
     };
   }
-  async search(tenantId, query) {
+  async search(tenantId, userId, query) {
     const normalized = query.toLocaleLowerCase();
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const clients2 = await provider.listClients();
     const matches = clients2.filter(
       (client) => [client.name, client.id, client.practiceCode, client.alertLevel].filter((value) => typeof value === "string").some((value) => value.toLocaleLowerCase().includes(normalized))
@@ -32290,12 +32531,17 @@ var HealthService = class {
         return {
           id,
           title: client.name,
-          url: await this.permalinks.create(tenantId, connectionId, id)
+          url: await this.permalinks.create(
+            tenantId,
+            userId,
+            connectionId,
+            id
+          )
         };
       })
     );
   }
-  async fetchRecord(tenantId, id, expectedConnectionId) {
+  async fetchRecord(tenantId, userId, id, expectedConnectionId) {
     if (!id.startsWith(HealthClientPrefix)) {
       throw new ConnectorError({
         code: ConnectorErrorCode.UnsupportedCapability,
@@ -32309,7 +32555,10 @@ var HealthService = class {
         message: "The Dext client record ID is incomplete."
       });
     }
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     if (expectedConnectionId && expectedConnectionId !== connectionId) {
       throw new ConnectorError({
         code: ConnectorErrorCode.NotFound,
@@ -32336,7 +32585,12 @@ var HealthService = class {
         `Annual turnover: ${activity2.annual.turnover ?? "unknown"}`,
         `Annual total activity count: ${activity2.annual.totalCount ?? "unknown"}`
       ].join("\n"),
-      url: await this.permalinks.create(tenantId, connectionId, id),
+      url: await this.permalinks.create(
+        tenantId,
+        userId,
+        connectionId,
+        id
+      ),
       metadata: {
         module: "data-health",
         kind: "client",
@@ -32345,6 +32599,9 @@ var HealthService = class {
         providerMode: provider.mode
       }
     };
+  }
+  supportsRecord(id) {
+    return id.startsWith(HealthClientPrefix);
   }
   summaryRiskReasons(client, options, requestedAlertLevels) {
     const reasons = [];
@@ -32395,16 +32652,73 @@ var PermalinkService = class {
   }
   baseUrl;
   repository;
-  async create(tenantId, connectionId, recordId) {
+  async create(tenantId, userId, connectionId, recordId) {
     const record2 = await this.repository.getOrCreate(
       tenantId,
+      userId,
       connectionId,
       recordId
     );
     return new URL(`/records/${record2.publicId}`, this.baseUrl).toString();
   }
-  resolve(tenantId, publicId) {
-    return this.repository.resolve(tenantId, publicId);
+  resolve(tenantId, userId, publicId) {
+    return this.repository.resolve(tenantId, userId, publicId);
+  }
+};
+
+// src/services/record-service.ts
+var RecordService = class {
+  constructor(health, commerce) {
+    this.health = health;
+    this.commerce = commerce;
+  }
+  health;
+  commerce;
+  async search(tenantId, userId, query) {
+    const searches = [
+      this.optionalSearch(() => this.health.search(tenantId, userId, query))
+    ];
+    if (this.commerce) {
+      searches.push(
+        this.optionalSearch(() => this.commerce.search(tenantId, userId, query))
+      );
+    }
+    const results = (await Promise.all(searches)).flat();
+    return results.sort(
+      (left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id)
+    ).slice(0, 50);
+  }
+  fetchRecord(tenantId, userId, id, expectedConnectionId) {
+    if (this.health.supportsRecord(id)) {
+      return this.health.fetchRecord(
+        tenantId,
+        userId,
+        id,
+        expectedConnectionId
+      );
+    }
+    if (this.commerce?.supportsRecord(id)) {
+      return this.commerce.fetchRecord(
+        tenantId,
+        userId,
+        id,
+        expectedConnectionId
+      );
+    }
+    throw new ConnectorError({
+      code: ConnectorErrorCode.UnsupportedCapability,
+      message: `The record type in ${id} is not enabled.`
+    });
+  }
+  async optionalSearch(operation) {
+    try {
+      return await operation();
+    } catch (error51) {
+      if (error51 instanceof ConnectorError && (error51.code === ConnectorErrorCode.NotFound || error51.code === ConnectorErrorCode.UnsupportedCapability)) {
+        return [];
+      }
+      throw error51;
+    }
   }
 };
 
@@ -32424,10 +32738,10 @@ var InMemorySnapshotRepository = class {
   snapshots = /* @__PURE__ */ new Map();
   keys = /* @__PURE__ */ new Map();
   async create(input) {
-    const compoundKey = `${input.tenantId}:${input.connectionId}:${input.snapshotKey}`;
+    const compoundKey = `${input.tenantId}:${input.ownerUserId}:${input.connectionId}:${input.snapshotKey}`;
     const existingId = this.keys.get(compoundKey);
     if (existingId) {
-      return this.get(input.tenantId, existingId);
+      return this.get(input.tenantId, input.ownerUserId, existingId);
     }
     const snapshot = {
       ...structuredClone(input),
@@ -32437,9 +32751,9 @@ var InMemorySnapshotRepository = class {
     this.keys.set(compoundKey, snapshot.id);
     return structuredClone(snapshot);
   }
-  async get(tenantId, snapshotId) {
+  async get(tenantId, userId, snapshotId) {
     const snapshot = this.snapshots.get(snapshotId);
-    if (!snapshot || snapshot.tenantId !== tenantId) {
+    if (!snapshot || snapshot.tenantId !== tenantId || snapshot.ownerUserId !== userId) {
       throw notFound(`Health snapshot ${snapshotId} was not found.`);
     }
     return structuredClone(snapshot);
@@ -32448,8 +32762,8 @@ var InMemorySnapshotRepository = class {
 var InMemoryPermalinkRepository = class {
   records = /* @__PURE__ */ new Map();
   keys = /* @__PURE__ */ new Map();
-  async getOrCreate(tenantId, connectionId, recordId) {
-    const key = `${tenantId}:${connectionId}:${recordId}`;
+  async getOrCreate(tenantId, userId, connectionId, recordId) {
+    const key = `${tenantId}:${userId}:${connectionId}:${recordId}`;
     const existingId = this.keys.get(key);
     if (existingId) {
       return structuredClone(this.records.get(existingId));
@@ -32457,6 +32771,7 @@ var InMemoryPermalinkRepository = class {
     const record2 = {
       publicId: randomUUID(),
       tenantId,
+      ownerUserId: userId,
       connectionId,
       recordId
     };
@@ -32464,18 +32779,20 @@ var InMemoryPermalinkRepository = class {
     this.keys.set(key, record2.publicId);
     return structuredClone(record2);
   }
-  async resolve(tenantId, publicId) {
+  async resolve(tenantId, userId, publicId) {
     const record2 = this.records.get(publicId);
-    if (!record2 || record2.tenantId !== tenantId) {
+    if (!record2 || record2.tenantId !== tenantId || record2.ownerUserId !== userId) {
       throw notFound("The Dext record was not found.");
     }
     return structuredClone(record2);
   }
-  async invalidateConnection(tenantId, connectionId) {
+  async invalidateConnection(tenantId, userId, connectionId) {
     for (const [publicId, record2] of this.records) {
-      if (record2.tenantId === tenantId && record2.connectionId === connectionId) {
+      if (record2.tenantId === tenantId && record2.ownerUserId === userId && record2.connectionId === connectionId) {
         this.records.delete(publicId);
-        this.keys.delete(`${tenantId}:${connectionId}:${record2.recordId}`);
+        this.keys.delete(
+          `${tenantId}:${record2.ownerUserId}:${connectionId}:${record2.recordId}`
+        );
       }
     }
   }
@@ -32520,6 +32837,7 @@ function createPluginFixtureDependencies() {
     new CursorService(FixtureCursorKey),
     FixtureRiskDetailBudget
   );
+  const records = new RecordService(health);
   const auth = {
     authenticate: async () => cloneFixtureAuth()
   };
@@ -32529,8 +32847,9 @@ function createPluginFixtureDependencies() {
     snapshots,
     permalinks,
     health,
+    records,
     capabilities: new CapabilityService(
-      { liveDextRequestsEnabled: false },
+      { liveDextRequestsEnabled: false, commerceEnabled: false },
       health
     ),
     resourceMetadataUrl: new URL(

@@ -5,6 +5,7 @@ import {
   DextClientDetailSchema,
   DextClientSummarySchema
 } from "./dext-health.js";
+import { DextCommerceTransactionSchema } from "./dext-commerce.js";
 
 export const EmptyInputSchema = {};
 
@@ -55,9 +56,32 @@ export const CompareSnapshotsInputSchema = {
   laterSnapshotId: z.string().trim().min(1).max(200)
 };
 
+export const ListInvoicesInputSchema = {
+  direction: z.enum(["sales", "purchases", "all"]).default("all"),
+  query: z.string().trim().max(200).optional(),
+  accountIds: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+  minTransactedAt: z.iso.datetime({ offset: true }).optional(),
+  maxTransactedAt: z.iso.datetime({ offset: true }).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().trim().min(1).max(2_000).optional()
+};
+
+export const GetInvoiceInputSchema = {
+  transactionId: z.string().trim().min(1).max(200)
+};
+
 export const ConnectionStatusOutputSchema = {
   providerMode: z.enum(["fixture", "live", "disabled"]),
   liveDextRequestsEnabled: z.boolean(),
+  connections: z.array(
+    z.object({
+      module: z.enum(["data_health", "commerce"]),
+      environment: z.enum(["sandbox", "production"]),
+      label: z.string(),
+      state: z.enum(["active", "pending", "invalid", "disconnected"]),
+      validatedAt: z.string().optional()
+    })
+  ),
   modules: z.record(z.string(), z.unknown())
 };
 
@@ -149,4 +173,17 @@ export const CompareSnapshotsOutputSchema = {
     })
   ),
   formulaVersion: z.string()
+};
+
+export const ListInvoicesOutputSchema = {
+  transactions: z.array(DextCommerceTransactionSchema),
+  count: z.number().int().min(0),
+  totalCount: z.number().int().min(0).optional(),
+  nextCursor: z.string().optional(),
+  asOf: z.string()
+};
+
+export const GetInvoiceOutputSchema = {
+  invoice: DextCommerceTransactionSchema,
+  asOf: z.string()
 };

@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/); prerelease builds are not yet a
 stable compatibility promise.
 
+## [0.2.0-beta.1] - Unreleased
+
+### Added
+
+- Authenticated connection API for validating and envelope-encrypting user-submitted Dext credentials outside MCP conversations.
+- User-owned Data Health and Commerce connections with principal-level PostgreSQL row-level security for credentials, snapshots, and permalinks.
+- Read-only Dext Commerce invoice and bill provider, `list_invoices`, and `get_invoice` tools using the documented sandbox and production hosts.
+- Unified standard `search` and `fetch` across enabled Data Health and Commerce modules.
+- Hosted-plugin preparation and release gates that reject placeholders, stdio fixture fallbacks, and non-HTTPS endpoints.
+
+### Changed
+
+- Production now fails closed unless live Dext requests, OAuth, PostgreSQL, and secret-backed encryption are all configured.
+- Public release archives omit the fixture stdio runtime in the hosted release workflow.
+
+### Security
+
+- Connection lookup, credential decryption, snapshots, and record links are bound to both the authenticated tenant and user.
+- No test or CI path authenticates to Dext; Commerce and Data Health HTTP coverage uses mocked or loopback-only transports.
+
 ## [0.1.0-beta.2] - 2026-08-01
 
 ### Added
@@ -36,3 +56,4 @@ stable compatibility promise.
 
 [0.1.0-beta.1]: https://github.com/bidule995/dext-codex-connector/releases/tag/v0.1.0-beta.1
 [0.1.0-beta.2]: https://github.com/bidule995/dext-codex-connector/releases/tag/v0.1.0-beta.2
+[0.2.0-beta.1]: https://github.com/bidule995/dext-codex-connector/compare/v0.1.0-beta.2...v0.2.0-beta.1

@@ -16,6 +16,7 @@ const ConfigSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DEXT_DATA_SOURCE: z.enum(["fixture", "live", "disabled"]).default("fixture"),
   DEXT_LIVE_REQUESTS_ENABLED: BooleanStringSchema,
+  DEXT_COMMERCE_ENABLED: BooleanStringSchema,
   AUTH_MODE: z.enum(["development", "oauth"]).default("development"),
   ALLOW_DEVELOPMENT_AUTH: BooleanStringSchema,
   DEVELOPMENT_AUTH_TOKEN: z.string().min(16).default("local-dev-token-change-me"),
@@ -79,6 +80,11 @@ function validateProduction(config: AppConfig): void {
   if (!config.CREDENTIAL_MASTER_KEY) {
     throw new Error("Production requires CREDENTIAL_MASTER_KEY from a secret manager.");
   }
+  if (config.DEXT_DATA_SOURCE !== "live" || !config.DEXT_LIVE_REQUESTS_ENABLED) {
+    throw new Error(
+      "Production requires the live provider and explicit live-request enablement; fixture fallback is forbidden."
+    );
+  }
   if (config.CURSOR_ENCRYPTION_KEY === "local-development-cursor-key-change-me") {
     throw new Error("Production requires a dedicated CURSOR_ENCRYPTION_KEY.");
   }
@@ -87,8 +93,13 @@ function validateProduction(config: AppConfig): void {
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const config = ConfigSchema.parse(environment);
 
-  if (config.NODE_ENV === "test" && config.DEXT_DATA_SOURCE === "live") {
-    throw new Error("Tests reject live Dext mode. Use fixtures or a loopback mock provider.");
+  if (
+    config.NODE_ENV === "test" &&
+    (config.DEXT_DATA_SOURCE === "live" || config.DEXT_LIVE_REQUESTS_ENABLED)
+  ) {
+    throw new Error(
+      "Tests reject live Dext requests. Use fixtures or construct a loopback/mock provider directly."
+    );
   }
 
   if (config.DEXT_DATA_SOURCE === "live") {
@@ -102,6 +113,23 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     }
     if (!config.CREDENTIAL_MASTER_KEY) {
       throw new Error("Live Dext mode requires encrypted tenant credentials.");
+    }
+  }
+
+  if (config.DEXT_COMMERCE_ENABLED) {
+    if (!config.DEXT_LIVE_REQUESTS_ENABLED) {
+      throw new Error(
+        "Dext Commerce requires explicit live-request enablement."
+      );
+    }
+    if (
+      config.STORAGE_MODE !== "postgres" ||
+      !config.DATABASE_URL ||
+      !config.CREDENTIAL_MASTER_KEY
+    ) {
+      throw new Error(
+        "Dext Commerce requires Postgres storage and encrypted user credentials."
+      );
     }
   }
 

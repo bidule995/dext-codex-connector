@@ -33,9 +33,16 @@ export class InMemoryAuditSink implements AuditSink {
 export interface UpstreamConnection {
   id: string;
   tenantId: string;
-  module: "data_health";
+  ownerUserId: string;
+  module: DextModule;
+  environment: DextEnvironment;
+  label: string;
   state: "active" | "pending" | "invalid" | "disconnected";
+  validatedAt?: string;
 }
+
+export type DextModule = "data_health" | "commerce";
+export type DextEnvironment = "sandbox" | "production";
 
 export interface EncryptedCredential {
   id: string;
@@ -52,13 +59,30 @@ export interface EncryptedCredential {
 export interface ConnectionRepository {
   getActiveForModule(
     tenantId: string,
-    module: "data_health"
+    userId: string,
+    module: DextModule
   ): Promise<UpstreamConnection>;
+  listForUser(tenantId: string, userId: string): Promise<UpstreamConnection[]>;
+  replaceActiveConnection(input: {
+    tenantId: string;
+    userId: string;
+    module: DextModule;
+    environment: DextEnvironment;
+    label: string;
+    tokenFingerprint: string;
+    credential: Omit<EncryptedCredential, "id" | "tenantId" | "connectionId">;
+  }): Promise<UpstreamConnection>;
+  disconnect(
+    tenantId: string,
+    userId: string,
+    module: DextModule
+  ): Promise<void>;
 }
 
 export interface CredentialRepository {
   getActiveForConnection(
     tenantId: string,
+    userId: string,
     connectionId: string
   ): Promise<EncryptedCredential>;
 }
@@ -66,6 +90,7 @@ export interface CredentialRepository {
 export interface HealthSnapshot {
   id: string;
   tenantId: string;
+  ownerUserId: string;
   connectionId: string;
   snapshotKey: string;
   asOf: string;
@@ -75,12 +100,17 @@ export interface HealthSnapshot {
 
 export interface SnapshotRepository {
   create(input: Omit<HealthSnapshot, "id">): Promise<HealthSnapshot>;
-  get(tenantId: string, snapshotId: string): Promise<HealthSnapshot>;
+  get(
+    tenantId: string,
+    userId: string,
+    snapshotId: string
+  ): Promise<HealthSnapshot>;
 }
 
 export interface PermalinkRecord {
   publicId: string;
   tenantId: string;
+  ownerUserId: string;
   connectionId: string;
   recordId: string;
 }
@@ -88,11 +118,20 @@ export interface PermalinkRecord {
 export interface PermalinkRepository {
   getOrCreate(
     tenantId: string,
+    userId: string,
     connectionId: string,
     recordId: string
   ): Promise<PermalinkRecord>;
-  resolve(tenantId: string, publicId: string): Promise<PermalinkRecord>;
-  invalidateConnection(tenantId: string, connectionId: string): Promise<void>;
+  resolve(
+    tenantId: string,
+    userId: string,
+    publicId: string
+  ): Promise<PermalinkRecord>;
+  invalidateConnection(
+    tenantId: string,
+    userId: string,
+    connectionId: string
+  ): Promise<void>;
 }
 
 export class InMemorySnapshotRepository implements SnapshotRepository {
@@ -100,10 +139,10 @@ export class InMemorySnapshotRepository implements SnapshotRepository {
   private readonly keys = new Map<string, string>();
 
   async create(input: Omit<HealthSnapshot, "id">): Promise<HealthSnapshot> {
-    const compoundKey = `${input.tenantId}:${input.connectionId}:${input.snapshotKey}`;
+    const compoundKey = `${input.tenantId}:${input.ownerUserId}:${input.connectionId}:${input.snapshotKey}`;
     const existingId = this.keys.get(compoundKey);
     if (existingId) {
-      return this.get(input.tenantId, existingId);
+      return this.get(input.tenantId, input.ownerUserId, existingId);
     }
 
     const snapshot: HealthSnapshot = {
@@ -115,9 +154,17 @@ export class InMemorySnapshotRepository implements SnapshotRepository {
     return structuredClone(snapshot);
   }
 
-  async get(tenantId: string, snapshotId: string): Promise<HealthSnapshot> {
+  async get(
+    tenantId: string,
+    userId: string,
+    snapshotId: string
+  ): Promise<HealthSnapshot> {
     const snapshot = this.snapshots.get(snapshotId);
-    if (!snapshot || snapshot.tenantId !== tenantId) {
+    if (
+      !snapshot ||
+      snapshot.tenantId !== tenantId ||
+      snapshot.ownerUserId !== userId
+    ) {
       throw notFound(`Health snapshot ${snapshotId} was not found.`);
     }
     return structuredClone(snapshot);
@@ -130,10 +177,11 @@ export class InMemoryPermalinkRepository implements PermalinkRepository {
 
   async getOrCreate(
     tenantId: string,
+    userId: string,
     connectionId: string,
     recordId: string
   ): Promise<PermalinkRecord> {
-    const key = `${tenantId}:${connectionId}:${recordId}`;
+    const key = `${tenantId}:${userId}:${connectionId}:${recordId}`;
     const existingId = this.keys.get(key);
     if (existingId) {
       return structuredClone(this.records.get(existingId)!);
@@ -141,6 +189,7 @@ export class InMemoryPermalinkRepository implements PermalinkRepository {
     const record = {
       publicId: randomUUID(),
       tenantId,
+      ownerUserId: userId,
       connectionId,
       recordId
     };
@@ -149,9 +198,17 @@ export class InMemoryPermalinkRepository implements PermalinkRepository {
     return structuredClone(record);
   }
 
-  async resolve(tenantId: string, publicId: string): Promise<PermalinkRecord> {
+  async resolve(
+    tenantId: string,
+    userId: string,
+    publicId: string
+  ): Promise<PermalinkRecord> {
     const record = this.records.get(publicId);
-    if (!record || record.tenantId !== tenantId) {
+    if (
+      !record ||
+      record.tenantId !== tenantId ||
+      record.ownerUserId !== userId
+    ) {
       throw notFound("The Dext record was not found.");
     }
     return structuredClone(record);
@@ -159,12 +216,19 @@ export class InMemoryPermalinkRepository implements PermalinkRepository {
 
   async invalidateConnection(
     tenantId: string,
+    userId: string,
     connectionId: string
   ): Promise<void> {
     for (const [publicId, record] of this.records) {
-      if (record.tenantId === tenantId && record.connectionId === connectionId) {
+      if (
+        record.tenantId === tenantId &&
+        record.ownerUserId === userId &&
+        record.connectionId === connectionId
+      ) {
         this.records.delete(publicId);
-        this.keys.delete(`${tenantId}:${connectionId}:${record.recordId}`);
+        this.keys.delete(
+          `${tenantId}:${record.ownerUserId}:${connectionId}:${record.recordId}`
+        );
       }
     }
   }

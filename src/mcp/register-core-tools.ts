@@ -44,7 +44,10 @@ export function registerCoreTools(
         },
         async () =>
           structuredResult(
-            await dependencies.capabilities.connectionStatus(auth.tenantId)
+            await dependencies.capabilities.connectionStatus(
+              auth.tenantId,
+              auth.userId
+            )
           )
       )
   );

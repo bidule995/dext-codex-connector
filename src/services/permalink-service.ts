@@ -11,18 +11,24 @@ export class PermalinkService {
 
   async create(
     tenantId: string,
+    userId: string,
     connectionId: string,
     recordId: string
   ): Promise<string> {
     const record = await this.repository.getOrCreate(
       tenantId,
+      userId,
       connectionId,
       recordId
     );
     return new URL(`/records/${record.publicId}`, this.baseUrl).toString();
   }
 
-  resolve(tenantId: string, publicId: string): Promise<PermalinkRecord> {
-    return this.repository.resolve(tenantId, publicId);
+  resolve(
+    tenantId: string,
+    userId: string,
+    publicId: string
+  ): Promise<PermalinkRecord> {
+    return this.repository.resolve(tenantId, userId, publicId);
   }
 }

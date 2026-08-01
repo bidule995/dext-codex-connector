@@ -1,4 +1,4 @@
-import { createDecipheriv } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 import type { EncryptedCredential } from "../storage/repositories.js";
 
@@ -6,16 +6,69 @@ export interface CredentialDecryptor {
   decrypt(credential: EncryptedCredential): Promise<string>;
 }
 
-export class AesGcmEnvelopeCredentialDecryptor
-  implements CredentialDecryptor
-{
-  private readonly masterKey: Buffer;
+export interface CredentialEncryptor {
+  encrypt(
+    token: string
+  ): Promise<Omit<EncryptedCredential, "id" | "tenantId" | "connectionId">>;
+}
+
+abstract class AesGcmEnvelopeKey {
+  protected readonly masterKey: Buffer;
 
   constructor(encodedMasterKey: string) {
     this.masterKey = Buffer.from(encodedMasterKey, "base64url");
     if (this.masterKey.length !== 32) {
       throw new Error("CREDENTIAL_MASTER_KEY must decode to 32 bytes.");
     }
+  }
+}
+
+export class AesGcmEnvelopeCredentialEncryptor
+  extends AesGcmEnvelopeKey
+  implements CredentialEncryptor
+{
+  async encrypt(
+    token: string
+  ): Promise<Omit<EncryptedCredential, "id" | "tenantId" | "connectionId">> {
+    const dataKey = randomBytes(32);
+    try {
+      const keyNonce = randomBytes(12);
+      const keyCipher = createCipheriv("aes-256-gcm", this.masterKey, keyNonce);
+      const wrappedKey = Buffer.concat([
+        keyCipher.update(dataKey),
+        keyCipher.final()
+      ]);
+      const encryptedDataKey = Buffer.concat([
+        keyNonce,
+        keyCipher.getAuthTag(),
+        wrappedKey
+      ]);
+      const nonce = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", dataKey, nonce);
+      const ciphertext = Buffer.concat([
+        cipher.update(token, "utf8"),
+        cipher.final()
+      ]);
+      return {
+        ciphertext,
+        encryptedDataKey,
+        nonce,
+        authTag: cipher.getAuthTag(),
+        algorithmVersion: "aes-256-gcm-envelope-v1",
+        keyReference: "connector-master-key"
+      };
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+}
+
+export class AesGcmEnvelopeCredentialDecryptor
+  extends AesGcmEnvelopeKey
+  implements CredentialDecryptor
+{
+  constructor(encodedMasterKey: string) {
+    super(encodedMasterKey);
   }
 
   async decrypt(credential: EncryptedCredential): Promise<string> {

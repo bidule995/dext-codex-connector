@@ -10,6 +10,7 @@ import { CapabilityService } from "../services/capability-service.js";
 import { CursorService } from "../services/cursor-service.js";
 import { HealthService } from "../services/health-service.js";
 import { PermalinkService } from "../services/permalink-service.js";
+import { RecordService } from "../services/record-service.js";
 import {
   InMemoryAuditSink,
   InMemoryPermalinkRepository,
@@ -52,6 +53,7 @@ export function createPluginFixtureDependencies(): AppDependencies {
     new CursorService(FixtureCursorKey),
     FixtureRiskDetailBudget
   );
+  const records = new RecordService(health);
   const auth: AuthService = {
     authenticate: async () => cloneFixtureAuth()
   };
@@ -62,8 +64,9 @@ export function createPluginFixtureDependencies(): AppDependencies {
     snapshots,
     permalinks,
     health,
+    records,
     capabilities: new CapabilityService(
-      { liveDextRequestsEnabled: false },
+      { liveDextRequestsEnabled: false, commerceEnabled: false },
       health
     ),
     resourceMetadataUrl: new URL(
