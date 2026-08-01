@@ -20,13 +20,22 @@ const affectsPluginRuntime = changed.some((path) =>
   [
     ".mcp.json",
     "assets/",
+    "package.json",
+    "pnpm-lock.yaml",
     "plugin/runtime/",
     "scripts/build-plugin.mjs",
+    "src/auth/types.ts",
+    "src/connections/provider-resolver.ts",
+    "src/contracts/",
+    "src/errors.ts",
     "src/mcp/",
     "src/plugin/",
+    "src/providers/dext-commerce/catalog.ts",
     "src/providers/dext-health/",
+    "src/providers/dext-prepare/status.ts",
     "src/services/",
-    "src/storage/repositories.ts"
+    "src/storage/repositories.ts",
+    "src/version.ts"
   ].some((prefix) => path === prefix || path.startsWith(prefix))
 );
 
