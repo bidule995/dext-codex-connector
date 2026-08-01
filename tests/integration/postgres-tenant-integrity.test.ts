@@ -13,7 +13,10 @@ suite("Postgres tenant integrity", () => {
   const tenantA = "11111111-1111-4111-8111-111111111111";
   const tenantB = "22222222-2222-4222-8222-222222222222";
   const userA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const userA2 = "abababab-abab-4bab-8bab-abababababab";
+  const userB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const connectionA = "aaaaaaaa-1111-4111-8111-111111111111";
+  const connectionA2 = "abababab-1111-4111-8111-111111111111";
   const connectionB = "bbbbbbbb-2222-4222-8222-222222222222";
 
   beforeAll(async () => {
@@ -28,28 +31,49 @@ suite("Postgres tenant integrity", () => {
     }
     const migration1 = await readFile("migrations/0001_foundation.sql", "utf8");
     const migration2 = await readFile("migrations/0002_tenant_integrity.sql", "utf8");
+    const migration3 = await readFile(
+      "migrations/0003_user_owned_connections.sql",
+      "utf8"
+    );
     await pool.query(migration1);
     await pool.query(migration2);
+    await pool.query(migration3);
     await pool.query(
       `INSERT INTO tenants (id, name) VALUES ($1, 'Tenant A'), ($2, 'Tenant B')`,
       [tenantA, tenantB]
     );
     await pool.query(
-      `INSERT INTO users (id, issuer, subject) VALUES ($1, 'https://issuer.test', 'user-a')`,
-      [userA]
+      `INSERT INTO users (id, issuer, subject) VALUES
+        ($1, 'https://issuer.test', 'user-a'),
+        ($2, 'https://issuer.test', 'user-a2'),
+        ($3, 'https://issuer.test', 'user-b')`,
+      [userA, userA2, userB]
     );
     await pool.query(
       `INSERT INTO memberships (tenant_id, user_id, role, grants)
-       VALUES ($1, $2, 'administrator', ARRAY['connector.read','health.read'])`,
-      [tenantA, userA]
+       VALUES
+        ($1, $2, 'administrator', ARRAY['connector.read','records.read','health.read']),
+        ($1, $3, 'viewer', ARRAY['connector.read','records.read','health.read']),
+        ($4, $5, 'administrator', ARRAY['connector.read','records.read','health.read'])`,
+      [tenantA, userA, userA2, tenantB, userB]
     );
     await pool.query(
       `INSERT INTO upstream_connections
-        (id, tenant_id, module, environment, label, state)
+        (id, tenant_id, owner_user_id, module, environment, label, state)
        VALUES
-        ($1, $3, 'data_health', 'sandbox', 'Tenant A', 'active'),
-        ($2, $4, 'data_health', 'sandbox', 'Tenant B', 'active')`,
-      [connectionA, connectionB, tenantA, tenantB]
+        ($1, $4, $6, 'data_health', 'production', 'Shared label', 'active'),
+        ($2, $4, $7, 'data_health', 'production', 'Shared label', 'active'),
+        ($3, $5, $8, 'data_health', 'production', 'Tenant B', 'active')`,
+      [
+        connectionA,
+        connectionA2,
+        connectionB,
+        tenantA,
+        tenantB,
+        userA,
+        userA2,
+        userB
+      ]
     );
   });
 
@@ -75,6 +99,9 @@ suite("Postgres tenant integrity", () => {
       await client.query("SET LOCAL ROLE dext_connector_app");
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [
         tenantA
+      ]);
+      await client.query("SELECT set_config('app.user_id', $1, true)", [
+        userA
       ]);
       const result = await client.query<{ tenant_id: string }>(
         "SELECT tenant_id FROM upstream_connections ORDER BY tenant_id"

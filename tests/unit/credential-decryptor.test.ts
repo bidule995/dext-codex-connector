@@ -2,7 +2,10 @@ import { createCipheriv, randomBytes } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { AesGcmEnvelopeCredentialDecryptor } from "../../src/credentials/credential-decryptor.js";
+import {
+  AesGcmEnvelopeCredentialDecryptor,
+  AesGcmEnvelopeCredentialEncryptor
+} from "../../src/credentials/credential-decryptor.js";
 import type { EncryptedCredential } from "../../src/storage/repositories.js";
 
 function encryptCredential(token: string): {
@@ -47,6 +50,24 @@ function encryptCredential(token: string): {
 }
 
 describe("AesGcmEnvelopeCredentialDecryptor", () => {
+  it("round-trips a credential without embedding the master key", async () => {
+    const masterKey = randomBytes(32).toString("base64url");
+    const encrypted = await new AesGcmEnvelopeCredentialEncryptor(
+      masterKey
+    ).encrypt("sandbox-api-key");
+    expect(Buffer.from(encrypted.ciphertext).toString("utf8")).not.toContain(
+      "sandbox-api-key"
+    );
+    await expect(
+      new AesGcmEnvelopeCredentialDecryptor(masterKey).decrypt({
+        ...encrypted,
+        id: "credential-test",
+        tenantId: "tenant-test",
+        connectionId: "connection-test"
+      })
+    ).resolves.toBe("sandbox-api-key");
+  });
+
   it("decrypts an authenticated tenant credential", async () => {
     const encrypted = encryptCredential("fictional-dext-token");
     const decryptor = new AesGcmEnvelopeCredentialDecryptor(

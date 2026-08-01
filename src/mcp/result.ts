@@ -11,7 +11,7 @@ export interface ToolExecutionContext {
   audit: AuditSink;
   tool: string;
   requiredScope: string;
-  resourceMetadataUrl: string;
+  resourceMetadataUrl: string | undefined;
   targetIds?: string[];
 }
 
@@ -70,7 +70,8 @@ export async function executeTool(
             : { retryAfterMs: connectorError.retryAfterMs })
         }
       }),
-      ...(connectorError.code === "permission_denied"
+      ...(connectorError.code === "permission_denied" &&
+      context.resourceMetadataUrl
         ? {
             _meta: {
               "mcp/www_authenticate": [

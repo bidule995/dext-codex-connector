@@ -12,6 +12,8 @@ import type {
   AuditSink,
   ConnectionRepository,
   CredentialRepository,
+  DextEnvironment,
+  DextModule,
   EncryptedCredential,
   HealthSnapshot,
   PermalinkRecord,
@@ -118,21 +120,28 @@ export class PostgresRepositories
 
   async getActiveForModule(
     tenantId: string,
-    module: "data_health"
+    userId: string,
+    module: DextModule
   ): Promise<UpstreamConnection> {
-    return this.withTenant(tenantId, async (client) => {
+    return this.withPrincipal(tenantId, userId, async (client) => {
       const result = await client.query<{
         id: string;
         tenant_id: string;
-        module: "data_health";
+        owner_user_id: string;
+        module: DextModule;
+        environment: DextEnvironment;
+        label: string;
         state: UpstreamConnection["state"];
+        validated_at: Date | null;
       }>(
-        `SELECT id, tenant_id, module, state
+        `SELECT id, tenant_id, owner_user_id, module, environment, label,
+                state, validated_at
            FROM upstream_connections
-          WHERE tenant_id = $1 AND module = $2 AND state = 'active'
+          WHERE tenant_id = $1 AND owner_user_id = $2
+            AND module = $3 AND state = 'active'
           ORDER BY created_at DESC
           LIMIT 2`,
-        [tenantId, module]
+        [tenantId, userId, module]
       );
       if (result.rowCount !== 1 || !result.rows[0]) {
         throw new ConnectorError({
@@ -142,25 +151,180 @@ export class PostgresRepositories
               : ConnectorErrorCode.Conflict,
           message:
             result.rowCount === 0
-              ? "No active Dext Data Health connection exists for this tenant."
-              : "More than one active Dext Data Health connection exists for this tenant."
+              ? `No active Dext ${module} connection exists for this user.`
+              : `More than one active Dext ${module} connection exists for this user.`
         });
       }
       const row = result.rows[0];
       return {
         id: row.id,
         tenantId: row.tenant_id,
+        ownerUserId: row.owner_user_id,
         module: row.module,
-        state: row.state
+        environment: row.environment,
+        label: row.label,
+        state: row.state,
+        ...(row.validated_at === null
+          ? {}
+          : { validatedAt: row.validated_at.toISOString() })
       };
+    });
+  }
+
+  async listForUser(
+    tenantId: string,
+    userId: string
+  ): Promise<UpstreamConnection[]> {
+    return this.withPrincipal(tenantId, userId, async (client) => {
+      const result = await client.query<{
+        id: string;
+        tenant_id: string;
+        owner_user_id: string;
+        module: DextModule;
+        environment: DextEnvironment;
+        label: string;
+        state: UpstreamConnection["state"];
+        validated_at: Date | null;
+      }>(
+        `SELECT DISTINCT ON (module)
+                id, tenant_id, owner_user_id, module, environment, label,
+                state, validated_at
+           FROM upstream_connections
+          WHERE tenant_id = $1 AND owner_user_id = $2
+          ORDER BY module, created_at DESC`,
+        [tenantId, userId]
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        ownerUserId: row.owner_user_id,
+        module: row.module,
+        environment: row.environment,
+        label: row.label,
+        state: row.state,
+        ...(row.validated_at === null
+          ? {}
+          : { validatedAt: row.validated_at.toISOString() })
+      }));
+    });
+  }
+
+  async replaceActiveConnection(input: {
+    tenantId: string;
+    userId: string;
+    module: DextModule;
+    environment: DextEnvironment;
+    label: string;
+    tokenFingerprint: string;
+    credential: Omit<EncryptedCredential, "id" | "tenantId" | "connectionId">;
+  }): Promise<UpstreamConnection> {
+    return this.withPrincipal(input.tenantId, input.userId, async (client) => {
+      const previous = await client.query<{ id: string }>(
+        `SELECT id FROM upstream_connections
+          WHERE tenant_id = $1 AND owner_user_id = $2
+            AND module = $3 AND state = 'active'
+          FOR UPDATE`,
+        [input.tenantId, input.userId, input.module]
+      );
+      const previousIds = previous.rows.map(({ id }) => id);
+      if (previousIds.length > 0) {
+        await client.query(
+          `UPDATE encrypted_credentials
+              SET active = false
+            WHERE tenant_id = $1 AND connection_id = ANY($2::uuid[])`,
+          [input.tenantId, previousIds]
+        );
+        await client.query(
+          `UPDATE upstream_connections
+              SET state = 'disconnected', updated_at = now()
+            WHERE tenant_id = $1 AND owner_user_id = $2
+              AND id = ANY($3::uuid[])`,
+          [input.tenantId, input.userId, previousIds]
+        );
+      }
+      const inserted = await client.query<{
+        id: string;
+        validated_at: Date;
+      }>(
+        `INSERT INTO upstream_connections
+          (tenant_id, owner_user_id, module, environment, label, state,
+           token_fingerprint, validated_at)
+         VALUES ($1, $2, $3, $4, $5, 'active', $6, now())
+         RETURNING id, validated_at`,
+        [
+          input.tenantId,
+          input.userId,
+          input.module,
+          input.environment,
+          input.label,
+          input.tokenFingerprint
+        ]
+      );
+      const row = inserted.rows[0]!;
+      await client.query(
+        `INSERT INTO encrypted_credentials
+          (tenant_id, connection_id, ciphertext, encrypted_data_key, nonce,
+           auth_tag, algorithm_version, key_reference)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          input.tenantId,
+          row.id,
+          input.credential.ciphertext,
+          input.credential.encryptedDataKey,
+          input.credential.nonce,
+          input.credential.authTag,
+          input.credential.algorithmVersion,
+          input.credential.keyReference
+        ]
+      );
+      return {
+        id: row.id,
+        tenantId: input.tenantId,
+        ownerUserId: input.userId,
+        module: input.module,
+        environment: input.environment,
+        label: input.label,
+        state: "active",
+        validatedAt: row.validated_at.toISOString()
+      };
+    });
+  }
+
+  async disconnect(
+    tenantId: string,
+    userId: string,
+    module: DextModule
+  ): Promise<void> {
+    await this.withPrincipal(tenantId, userId, async (client) => {
+      const connections = await client.query<{ id: string }>(
+        `UPDATE upstream_connections
+            SET state = 'disconnected', updated_at = now()
+          WHERE tenant_id = $1 AND owner_user_id = $2
+            AND module = $3 AND state = 'active'
+          RETURNING id`,
+        [tenantId, userId, module]
+      );
+      if (connections.rowCount === 0) {
+        throw new ConnectorError({
+          code: ConnectorErrorCode.NotFound,
+          message: `No active Dext ${module} connection exists for this user.`
+        });
+      }
+      await client.query(
+        `UPDATE encrypted_credentials
+            SET active = false
+          WHERE tenant_id = $1 AND connection_id = ANY($2::uuid[])`,
+        [tenantId, connections.rows.map(({ id }) => id)]
+      );
     });
   }
 
   async getActiveForConnection(
     tenantId: string,
+    userId: string,
     connectionId: string
   ): Promise<EncryptedCredential> {
-    return this.withTenant(tenantId, async (client) => {
+    return this.withPrincipal(tenantId, userId, async (client) => {
       const result = await client.query<{
         id: string;
         tenant_id: string;
@@ -172,18 +336,22 @@ export class PostgresRepositories
         algorithm_version: string;
         key_reference: string;
       }>(
-        `SELECT id, tenant_id, connection_id, ciphertext, encrypted_data_key,
-                nonce, auth_tag, algorithm_version, key_reference
-           FROM encrypted_credentials
-          WHERE tenant_id = $1 AND connection_id = $2 AND active
+        `SELECT ec.id, ec.tenant_id, ec.connection_id, ec.ciphertext,
+                ec.encrypted_data_key, ec.nonce, ec.auth_tag,
+                ec.algorithm_version, ec.key_reference
+           FROM encrypted_credentials ec
+           JOIN upstream_connections uc
+             ON uc.tenant_id = ec.tenant_id AND uc.id = ec.connection_id
+          WHERE ec.tenant_id = $1 AND ec.connection_id = $2
+            AND uc.owner_user_id = $3 AND ec.active
           LIMIT 1`,
-        [tenantId, connectionId]
+        [tenantId, connectionId, userId]
       );
       const row = result.rows[0];
       if (result.rowCount !== 1 || !row) {
         throw new ConnectorError({
           code: ConnectorErrorCode.AuthenticationRequired,
-          message: "The tenant's Dext Data Health credential is unavailable."
+          message: "The current user's Dext credential is unavailable."
         });
       }
       return {
@@ -201,7 +369,10 @@ export class PostgresRepositories
   }
 
   async create(input: Omit<HealthSnapshot, "id">): Promise<HealthSnapshot> {
-    return this.withTenant(input.tenantId, async (client) => {
+    return this.withPrincipal(
+      input.tenantId,
+      input.ownerUserId,
+      async (client) => {
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO health_snapshots
           (tenant_id, connection_id, snapshot_key, as_of, formula_version)
@@ -246,12 +417,17 @@ export class PostgresRepositories
           values
         );
       }
-      return { ...structuredClone(input), id };
-    });
+        return { ...structuredClone(input), id };
+      }
+    );
   }
 
-  async get(tenantId: string, snapshotId: string): Promise<HealthSnapshot> {
-    return this.withTenant(tenantId, async (client) => {
+  async get(
+    tenantId: string,
+    userId: string,
+    snapshotId: string
+  ): Promise<HealthSnapshot> {
+    return this.withPrincipal(tenantId, userId, async (client) => {
       const snapshot = await client.query<{
         id: string;
         tenant_id: string;
@@ -285,6 +461,7 @@ export class PostgresRepositories
       return {
         id: row.id,
         tenantId: row.tenant_id,
+        ownerUserId: userId,
         connectionId: row.connection_id,
         snapshotKey: row.snapshot_key,
         asOf: row.as_of.toISOString(),
@@ -296,10 +473,11 @@ export class PostgresRepositories
 
   async getOrCreate(
     tenantId: string,
+    userId: string,
     connectionId: string,
     recordId: string
   ): Promise<PermalinkRecord> {
-    return this.withTenant(tenantId, async (client) => {
+    return this.withPrincipal(tenantId, userId, async (client) => {
       const result = await client.query<{
         public_id: string;
         tenant_id: string;
@@ -313,15 +491,16 @@ export class PostgresRepositories
          RETURNING public_id, tenant_id, connection_id, record_id`,
         [tenantId, connectionId, recordId]
       );
-      return this.toPermalink(result.rows[0]!);
+      return this.toPermalink(result.rows[0]!, userId);
     });
   }
 
   async resolve(
     tenantId: string,
+    userId: string,
     publicId: string
   ): Promise<PermalinkRecord> {
-    return this.withTenant(tenantId, async (client) => {
+    return this.withPrincipal(tenantId, userId, async (client) => {
       const result = await client.query<{
         public_id: string;
         tenant_id: string;
@@ -340,15 +519,16 @@ export class PostgresRepositories
           message: "The Dext record was not found."
         });
       }
-      return this.toPermalink(row);
+      return this.toPermalink(row, userId);
     });
   }
 
   async invalidateConnection(
     tenantId: string,
+    userId: string,
     connectionId: string
   ): Promise<void> {
-    await this.withTenant(tenantId, async (client) => {
+    await this.withPrincipal(tenantId, userId, async (client) => {
       await client.query(
         "DELETE FROM permalink_records WHERE tenant_id = $1 AND connection_id = $2",
         [tenantId, connectionId]
@@ -377,15 +557,29 @@ export class PostgresRepositories
     }
   }
 
+  private async withPrincipal<T>(
+    tenantId: string,
+    userId: string,
+    operation: (client: PoolClient) => Promise<T>
+  ): Promise<T> {
+    return this.withTenant(tenantId, async (client) => {
+      await client.query("SELECT set_config('app.user_id', $1, true)", [
+        userId
+      ]);
+      return operation(client);
+    });
+  }
+
   private toPermalink(row: {
     public_id: string;
     tenant_id: string;
     connection_id: string;
     record_id: string;
-  }): PermalinkRecord {
+  }, ownerUserId: string): PermalinkRecord {
     return {
       publicId: row.public_id,
       tenantId: row.tenant_id,
+      ownerUserId,
       connectionId: row.connection_id,
       recordId: row.record_id
     };

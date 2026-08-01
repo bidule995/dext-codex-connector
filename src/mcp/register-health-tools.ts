@@ -8,21 +8,20 @@ import {
   CompareClientsOutputSchema,
   CompareSnapshotsInputSchema,
   CompareSnapshotsOutputSchema,
-  FetchInputSchema,
   FindHealthRisksInputSchema,
   GetClientOutputSchema,
   ListClientsInputSchema,
   ListClientsOutputSchema,
   PortfolioOutputSchema,
   RiskOutputSchema,
-  SearchInputSchema,
   SnapshotHealthInputSchema,
   SnapshotOutputSchema,
   SummarizePortfolioInputSchema
 } from "../contracts/tool-schemas.js";
 import type { AppDependencies } from "../dependencies.js";
-import { executeTool, jsonTextResult, structuredResult } from "./result.js";
+import { executeTool, structuredResult } from "./result.js";
 import { toolSecurity } from "./security.js";
+import type { ToolSecurityMode } from "./security.js";
 
 const upstreamReadAnnotations = {
   readOnlyHint: true,
@@ -41,7 +40,8 @@ const snapshotAnnotations = {
 export function registerHealthTools(
   server: McpServer,
   dependencies: AppDependencies,
-  auth: AuthContext
+  auth: AuthContext,
+  securityMode: ToolSecurityMode = "oauth"
 ): void {
   const common = {
     auth,
@@ -49,46 +49,6 @@ export function registerHealthTools(
     requiredScope: ConnectorScopes.HealthRead,
     resourceMetadataUrl: dependencies.resourceMetadataUrl
   } as const;
-
-  server.registerTool(
-    "search",
-    {
-      title: "Search Dext records",
-      description:
-        "Use this when you need to find Dext Data Health client records by name, identifier, practice code, or alert level.",
-      inputSchema: SearchInputSchema,
-      annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
-    },
-    async ({ query }) =>
-      executeTool(
-        { ...common, tool: "search" },
-        async () =>
-          jsonTextResult({
-            results: await dependencies.health.search(auth.tenantId, query)
-          })
-      )
-  );
-
-  server.registerTool(
-    "fetch",
-    {
-      title: "Fetch a Dext record",
-      description:
-        "Use this when you have a Dext connector record ID and need its complete searchable text and metadata.",
-      inputSchema: FetchInputSchema,
-      annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
-    },
-    async ({ id }) =>
-      executeTool(
-        { ...common, tool: "fetch", targetIds: [id] },
-        async () =>
-          jsonTextResult(
-            await dependencies.health.fetchRecord(auth.tenantId, id)
-          )
-      )
-  );
 
   server.registerTool(
     "list_clients",
@@ -99,14 +59,14 @@ export function registerHealthTools(
       inputSchema: ListClientsInputSchema,
       outputSchema: ListClientsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ query, alertLevels, limit }) =>
       executeTool(
         { ...common, tool: "list_clients" },
         async () =>
           structuredResult(
-            await dependencies.health.listClients(auth.tenantId, {
+            await dependencies.health.listClients(auth.tenantId, auth.userId, {
               limit,
               ...(query === undefined ? {} : { query }),
               ...(alertLevels === undefined ? {} : { alertLevels })
@@ -124,14 +84,18 @@ export function registerHealthTools(
       inputSchema: ClientIdInputSchema,
       outputSchema: GetClientOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientId }) =>
       executeTool(
         { ...common, tool: "get_client", targetIds: [clientId] },
         async () =>
           structuredResult(
-            await dependencies.health.getClient(auth.tenantId, clientId)
+            await dependencies.health.getClient(
+              auth.tenantId,
+              auth.userId,
+              clientId
+            )
           )
       )
   );
@@ -145,7 +109,7 @@ export function registerHealthTools(
       inputSchema: ClientIdInputSchema,
       outputSchema: ClientActivityOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientId }) =>
       executeTool(
@@ -158,6 +122,7 @@ export function registerHealthTools(
           structuredResult(
             await dependencies.health.getClientActivityStats(
               auth.tenantId,
+              auth.userId,
               clientId
             )
           )
@@ -173,17 +138,21 @@ export function registerHealthTools(
       inputSchema: SummarizePortfolioInputSchema,
       outputSchema: PortfolioOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ alertLevels, healthScoreBelow }) =>
       executeTool(
         { ...common, tool: "summarize_portfolio_health" },
         async () =>
           structuredResult(
-            await dependencies.health.summarizePortfolio(auth.tenantId, {
+            await dependencies.health.summarizePortfolio(
+              auth.tenantId,
+              auth.userId,
+              {
               ...(alertLevels === undefined ? {} : { alertLevels }),
               ...(healthScoreBelow === undefined ? {} : { healthScoreBelow })
-            }),
+              }
+            ),
             "Returned aggregate portfolio health with a bounded client sample."
           )
       )
@@ -198,14 +167,14 @@ export function registerHealthTools(
       inputSchema: FindHealthRisksInputSchema,
       outputSchema: RiskOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async (input) =>
       executeTool(
         { ...common, tool: "find_client_health_risks" },
         async () =>
           structuredResult(
-            await dependencies.health.findRisks(auth.tenantId, {
+            await dependencies.health.findRisks(auth.tenantId, auth.userId, {
               healthScoreAtOrBelow: input.healthScoreAtOrBelow,
               requireHmrcConnected: input.requireHmrcConnected,
               limit: input.limit,
@@ -239,14 +208,18 @@ export function registerHealthTools(
       inputSchema: CompareClientsInputSchema,
       outputSchema: CompareClientsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientIds }) =>
       executeTool(
         { ...common, tool: "compare_clients", targetIds: clientIds },
         async () =>
           structuredResult(
-            await dependencies.health.compareClients(auth.tenantId, clientIds)
+            await dependencies.health.compareClients(
+              auth.tenantId,
+              auth.userId,
+              clientIds
+            )
           )
       )
   );
@@ -260,7 +233,7 @@ export function registerHealthTools(
       inputSchema: SnapshotHealthInputSchema,
       outputSchema: SnapshotOutputSchema,
       annotations: snapshotAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthSnapshotsWrite)
+      ...toolSecurity(ConnectorScopes.HealthSnapshotsWrite, securityMode)
     },
     async ({ snapshotKey }) =>
       executeTool(
@@ -273,7 +246,11 @@ export function registerHealthTools(
         },
         async () =>
           structuredResult(
-            await dependencies.health.takeSnapshot(auth.tenantId, snapshotKey)
+            await dependencies.health.takeSnapshot(
+              auth.tenantId,
+              auth.userId,
+              snapshotKey
+            )
           )
       )
   );
@@ -287,7 +264,7 @@ export function registerHealthTools(
       inputSchema: CompareSnapshotsInputSchema,
       outputSchema: CompareSnapshotsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ earlierSnapshotId, laterSnapshotId }) =>
       executeTool(
@@ -300,6 +277,7 @@ export function registerHealthTools(
           structuredResult(
             await dependencies.health.compareSnapshots(
               auth.tenantId,
+              auth.userId,
               earlierSnapshotId,
               laterSnapshotId
             )

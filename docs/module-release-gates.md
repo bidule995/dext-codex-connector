@@ -2,13 +2,17 @@
 
 ## Data Health
 
-The code, offline contracts, PostgreSQL repositories, tenant-scoped provider resolution, envelope decryption, and OAuth identity mapping are implemented. Registration is enabled in fixture mode. A production release still requires isolated live validation of all three documented endpoints, hosted OAuth provisioning, managed secret/KMS operation, backups and retention, MCP Inspector/Codex/ChatGPT host-loop testing, and a rollback drill.
+The local beta registers Data Health tools after it finds a dedicated personal API token. The provider limits requests to the documented `api.precision.dext.com` host and 60 requests per minute. Automated tests use injected responses and do not validate a real Dext account.
+
+Before the maintainer calls the local beta production-ready, an authorized user should validate the three documented endpoints against a dedicated Dext test tenant. The current company account remains outside that validation scope.
+
+The hosted source adds user-owned PostgreSQL connections, envelope encryption, an authenticated connection API, and OAuth identity mapping. Hosting remains deferred until an isolated validation tenant, managed secrets, backups, telemetry redaction, and a public OAuth deployment exist.
 
 ## Commerce
 
-The repository contains a 33-entry endpoint catalog with method, path, mutation, and destructive flags. There is no Commerce HTTP client and no Commerce MCP tool registration.
+The repository contains a 33-entry endpoint catalog plus a read-only HTTP provider for `GET /v2/users/me`, `GET /v2/transactions`, and `GET /v2/transactions/{transaction_id}`. A separate Commerce API key adds `list_invoices`, `get_invoice`, and invoice/bill records in `search` and `fetch`. Local and hosted configurations keep Commerce disabled by default.
 
-Before read tools are registered:
+Before enabling Commerce:
 
 - Obtain Dext Commerce sandbox credentials.
 - Confirm the documented envelope and opaque cursor behavior.
@@ -16,7 +20,7 @@ Before read tools are registered:
 - Capture redacted schemas for the endpoints used by the first tool group.
 - Establish conservative concurrency because public rate limits are not documented.
 
-Extraction additionally requires private object storage, malware scanning, file-size and format limits, expiration, and host file-input tests. Account connection and synchronization require a secure browser handoff so credentials and two-factor responses never enter MCP data. Writes and exports require preview and idempotency infrastructure. The two deletion contracts require a separate destructive-operation review.
+Extraction remains unimplemented and additionally requires private object storage, malware scanning, file-size and format limits, expiration, and host file-input tests. Account connection and synchronization remain unimplemented and require a secure browser handoff so credentials and two-factor responses never enter MCP data. Writes and exports require preview and idempotency infrastructure. The two deletion contracts require a separate destructive-operation review.
 
 ## Prepare
 

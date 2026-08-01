@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../../src/app.js";
 import { ConnectorScopes } from "../../src/auth/types.js";
+import { ConnectionService } from "../../src/connections/connection-service.js";
 import type { AppConfig } from "../../src/config.js";
 import { createDependencies, type AppDependencies } from "../../src/dependencies.js";
 import { fixtureConfig } from "../helpers/config.js";
+import type { ConnectionRepository } from "../../src/storage/repositories.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
 
@@ -119,22 +121,23 @@ describe("HTTP app", () => {
     );
   });
 
-  it("routes opaque record links and enforces tenant plus health.read", async () => {
+  it("routes opaque record links and enforces tenant, user, and records.read", async () => {
     const config = fixtureConfig();
     const dependencies = createDependencies(config);
     dependencies.auth = {
       authenticate: async (header) => ({
         tenantId: header?.includes("tenant-b") ? "tenant-b" : "tenant-a",
-        userId: "test-user",
+        userId: header?.includes("user-b") ? "user-b" : "test-user",
         scopes: header?.includes("limited")
           ? new Set([ConnectorScopes.ConnectorRead])
-          : new Set([ConnectorScopes.HealthRead]),
+          : new Set([ConnectorScopes.RecordsRead]),
         mode: "development"
       })
     };
     const app = createApp(config, dependencies);
     const [searchResult] = await dependencies.health.search(
       "tenant-a",
+      "test-user",
       "harbor"
     );
     const url = new URL(searchResult!.url);
@@ -168,5 +171,169 @@ describe("HTTP app", () => {
       headers: { authorization: "Bearer tenant-b" }
     });
     expect(wrongTenant.statusCode).toBe(404);
+
+    const wrongUser = await app.inject({
+      method: "GET",
+      url: url.pathname,
+      headers: { authorization: "Bearer user-b" }
+    });
+    expect(wrongUser.statusCode).toBe(404);
+  });
+
+  it("provisions a user-owned connection without returning or auditing the token", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    const stored = vi.fn<ConnectionRepository["replaceActiveConnection"]>(
+      async (input) => ({
+        id: "connection-test",
+        tenantId: input.tenantId,
+        ownerUserId: input.userId,
+        module: input.module,
+        environment: input.environment,
+        label: input.label,
+        state: "active",
+        validatedAt: "2026-08-01T10:00:00.000Z"
+      })
+    );
+    dependencies.connections = new ConnectionService(
+      {
+        getActiveForModule: vi.fn(),
+        listForUser: vi.fn(async () => []),
+        replaceActiveConnection: stored,
+        disconnect: vi.fn()
+      },
+      {
+        encrypt: vi.fn(async () => ({
+          ciphertext: Uint8Array.of(1),
+          encryptedDataKey: Uint8Array.of(2),
+          nonce: Uint8Array.of(3),
+          authTag: Uint8Array.of(4),
+          algorithmVersion: "aes-256-gcm-envelope-v1",
+          keyReference: "test-key"
+        }))
+      },
+      { validate: vi.fn(async () => undefined) },
+      true
+    );
+    const response = await createApp(config, dependencies).inject({
+      method: "PUT",
+      url: "/api/connections/commerce",
+      headers: {
+        authorization: "Bearer local-dev-token-change-me",
+        "content-type": "application/json"
+      },
+      payload: {
+        environment: "sandbox",
+        label: "Isolated sandbox",
+        token: "sandbox-secret-key"
+      }
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).not.toContain("sandbox-secret-key");
+    expect(response.json()).toMatchObject({
+      connection: {
+        module: "commerce",
+        environment: "sandbox",
+        label: "Isolated sandbox",
+        state: "active"
+      }
+    });
+    const persisted = stored.mock.calls[0]?.[0];
+    expect(JSON.stringify(persisted)).not.toContain("sandbox-secret-key");
+    expect(JSON.stringify(dependencies.audit)).not.toContain(
+      "sandbox-secret-key"
+    );
+  });
+
+  it("rate-limits authenticated connection status reads", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    dependencies.connections = new ConnectionService(
+      {
+        getActiveForModule: vi.fn(),
+        listForUser: vi.fn(async () => []),
+        replaceActiveConnection: vi.fn(),
+        disconnect: vi.fn()
+      },
+      { encrypt: vi.fn() },
+      { validate: vi.fn() },
+      false
+    );
+    const app = createApp(config, dependencies);
+    for (let requestNumber = 0; requestNumber < 60; requestNumber += 1) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/connections",
+        headers: { authorization: "Bearer local-dev-token-change-me" }
+      });
+      expect(response.statusCode).toBe(200);
+    }
+    const limited = await app.inject({
+      method: "GET",
+      url: "/api/connections",
+      headers: { authorization: "Bearer local-dev-token-change-me" }
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBeDefined();
+    expect(limited.json()).toMatchObject({
+      error: { code: "rate_limited", retryable: true }
+    });
+  });
+
+  it("rate-limits each authenticated connection write route", async () => {
+    const config = fixtureConfig();
+    const dependencies = createDependencies(config);
+    dependencies.connections = new ConnectionService(
+      {
+        getActiveForModule: vi.fn(),
+        listForUser: vi.fn(async () => []),
+        replaceActiveConnection: vi.fn(),
+        disconnect: vi.fn()
+      },
+      { encrypt: vi.fn() },
+      { validate: vi.fn() },
+      false
+    );
+    const app = createApp(config, dependencies);
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/connections/commerce",
+        headers: {
+          authorization: "Bearer local-dev-token-change-me",
+          "content-type": "application/json"
+        },
+        payload: {}
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    const limitedProvision = await app.inject({
+      method: "PUT",
+      url: "/api/connections/commerce",
+      headers: {
+        authorization: "Bearer local-dev-token-change-me",
+        "content-type": "application/json"
+      },
+      payload: {}
+    });
+    expect(limitedProvision.statusCode).toBe(429);
+    expect(limitedProvision.headers["retry-after"]).toBeDefined();
+
+    for (let requestNumber = 0; requestNumber < 10; requestNumber += 1) {
+      const response = await app.inject({
+        method: "DELETE",
+        url: "/api/connections/commerce",
+        headers: { authorization: "Bearer local-dev-token-change-me" }
+      });
+      expect(response.statusCode).toBe(204);
+    }
+    const limitedDisconnect = await app.inject({
+      method: "DELETE",
+      url: "/api/connections/commerce",
+      headers: { authorization: "Bearer local-dev-token-change-me" }
+    });
+    expect(limitedDisconnect.statusCode).toBe(429);
+    expect(limitedDisconnect.headers["retry-after"]).toBeDefined();
   });
 });

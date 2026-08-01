@@ -8,7 +8,10 @@ export interface ResolvedDextHealthProvider {
 
 export interface DextHealthProviderResolver {
   readonly configuredMode: DextHealthProvider["mode"];
-  resolve(tenantId: string): Promise<ResolvedDextHealthProvider>;
+  resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextHealthProvider>;
 }
 
 export class StaticDextHealthProviderResolver
@@ -19,13 +22,18 @@ export class StaticDextHealthProviderResolver
 
   constructor(
     provider: DextHealthProvider,
-    tenantProviders: ReadonlyMap<string, DextHealthProvider> = new Map()
+    tenantProviders: ReadonlyMap<string, DextHealthProvider> = new Map(),
+    private readonly connectionId = "static-data-health"
   ) {
     this.configuredMode = provider.mode;
     this.tenantProviders = new Map([["*", provider], ...tenantProviders]);
   }
 
-  async resolve(tenantId: string): Promise<ResolvedDextHealthProvider> {
+  async resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextHealthProvider> {
+    void userId;
     const provider =
       this.tenantProviders.get(tenantId) ?? this.tenantProviders.get("*");
     if (!provider) {
@@ -35,7 +43,7 @@ export class StaticDextHealthProviderResolver
       });
     }
     return {
-      connectionId: `fixture-connection:${tenantId}`,
+      connectionId: `${this.connectionId}:${tenantId}`,
       provider
     };
   }

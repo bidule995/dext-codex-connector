@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
 
-const entryUrl = new URL("../src/plugin/stdio.ts", import.meta.url);
+const entryUrl = new URL("../src/plugin/local-stdio.ts", import.meta.url);
 const outputUrl = new URL(
-  "../plugin/runtime/dext-fixture-stdio.mjs",
+  "../plugin/runtime/dext-local-stdio.mjs",
   import.meta.url
 );
 const checkOnly = process.argv.includes("--check");
@@ -31,7 +31,7 @@ const result = await build({
 
 const generated = result.outputFiles?.[0]?.contents;
 if (!generated) {
-  throw new Error("esbuild did not produce the fixture plugin bundle.");
+  throw new Error("esbuild did not produce the local plugin bundle.");
 }
 const output = Buffer.from(generated)
   .toString("utf8")

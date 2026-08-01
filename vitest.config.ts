@@ -7,6 +7,7 @@ export default defineConfig({
       reporter: ["text", "html"]
     },
     environment: "node",
+    setupFiles: ["tests/setup/no-external-network.ts"],
     include: ["tests/**/*.test.ts"]
   }
 });

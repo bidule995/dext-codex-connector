@@ -9,6 +9,7 @@ import {
 import type { AppDependencies } from "../dependencies.js";
 import { executeTool, structuredResult } from "./result.js";
 import { toolSecurity } from "./security.js";
+import type { ToolSecurityMode } from "./security.js";
 
 const readOnlyAnnotations = {
   readOnlyHint: true,
@@ -20,7 +21,8 @@ const readOnlyAnnotations = {
 export function registerCoreTools(
   server: McpServer,
   dependencies: AppDependencies,
-  auth: AuthContext
+  auth: AuthContext,
+  securityMode: ToolSecurityMode = "oauth"
 ): void {
   server.registerTool(
     "connection_status",
@@ -31,7 +33,7 @@ export function registerCoreTools(
       inputSchema: EmptyInputSchema,
       outputSchema: ConnectionStatusOutputSchema,
       annotations: readOnlyAnnotations,
-      ...toolSecurity(ConnectorScopes.ConnectorRead)
+      ...toolSecurity(ConnectorScopes.ConnectorRead, securityMode)
     },
     async () =>
       executeTool(
@@ -44,7 +46,10 @@ export function registerCoreTools(
         },
         async () =>
           structuredResult(
-            await dependencies.capabilities.connectionStatus(auth.tenantId)
+            await dependencies.capabilities.connectionStatus(
+              auth.tenantId,
+              auth.userId
+            )
           )
       )
   );
@@ -58,7 +63,7 @@ export function registerCoreTools(
       inputSchema: EmptyInputSchema,
       outputSchema: CapabilitiesOutputSchema,
       annotations: readOnlyAnnotations,
-      ...toolSecurity(ConnectorScopes.ConnectorRead)
+      ...toolSecurity(ConnectorScopes.ConnectorRead, securityMode)
     },
     async () =>
       executeTool(

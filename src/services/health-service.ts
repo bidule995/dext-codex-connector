@@ -11,7 +11,7 @@ import type {
   SnapshotRepository
 } from "../storage/repositories.js";
 import type { CursorService } from "./cursor-service.js";
-import type { PermalinkService } from "./permalink-service.js";
+import type { RecordLinkService } from "./permalink-service.js";
 
 const FormulaVersion = "health-v1";
 const HealthClientPrefix = "dext:health:client:";
@@ -60,7 +60,7 @@ export class HealthService {
   constructor(
     private readonly providers: DextHealthProviderResolver,
     private readonly snapshots: SnapshotRepository,
-    private readonly permalinks: PermalinkService,
+    private readonly permalinks: RecordLinkService,
     private readonly cursors: CursorService,
     private readonly detailRequestBudget: number,
     private readonly now: () => Date = () => new Date()
@@ -70,21 +70,25 @@ export class HealthService {
     return this.providers.configuredMode;
   }
 
-  async connectionStatus(tenantId: string): Promise<{
+  async connectionStatus(tenantId: string, userId: string): Promise<{
     enabled: boolean;
     mode: DextHealthProviderResolver["configuredMode"];
   }> {
-    const resolved = await this.providers.resolve(tenantId);
+    const resolved = await this.providers.resolve(tenantId, userId);
     return { enabled: resolved.provider.mode !== "disabled", mode: resolved.provider.mode };
   }
 
-  async listClients(tenantId: string, options: ListClientsOptions): Promise<{
+  async listClients(
+    tenantId: string,
+    userId: string,
+    options: ListClientsOptions
+  ): Promise<{
     clients: DextClientSummary[];
     count: number;
     truncated: boolean;
     asOf: string;
   }> {
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     let clients = await provider.listClients();
     if (options.query) {
       const query = options.query.toLocaleLowerCase();
@@ -112,23 +116,27 @@ export class HealthService {
     };
   }
 
-  async getClient(tenantId: string, clientId: string): Promise<{
+  async getClient(tenantId: string, userId: string, clientId: string): Promise<{
     client: DextClientDetail;
     asOf: string;
   }> {
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     return {
       client: await provider.getClient(clientId),
       asOf: this.now().toISOString()
     };
   }
 
-  async getClientActivityStats(tenantId: string, clientId: string): Promise<{
+  async getClientActivityStats(
+    tenantId: string,
+    userId: string,
+    clientId: string
+  ): Promise<{
     clientId: string;
     activity: DextClientActivityStats;
     asOf: string;
   }> {
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     return {
       clientId,
       activity: await provider.getClientActivityStats(clientId),
@@ -138,6 +146,7 @@ export class HealthService {
 
   async summarizePortfolio(
     tenantId: string,
+    userId: string,
     options: PortfolioOptions
   ): Promise<{
     clientCount: number;
@@ -150,7 +159,7 @@ export class HealthService {
     formulaVersion: string;
     asOf: string;
   }> {
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     let clients = await provider.listClients();
     if (options.alertLevels?.length) {
       const levels = new Set(
@@ -206,6 +215,7 @@ export class HealthService {
 
   async findRisks(
     tenantId: string,
+    userId: string,
     options: RiskOptions
   ): Promise<{
     matches: Array<{ client: RiskClient; reasons: string[] }>;
@@ -219,7 +229,10 @@ export class HealthService {
     formulaVersion: string;
     asOf: string;
   }> {
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const summaries = (await provider.listClients()).sort((left, right) =>
       left.id.localeCompare(right.id)
     );
@@ -311,7 +324,11 @@ export class HealthService {
     };
   }
 
-  async compareClients(tenantId: string, clientIds: string[]): Promise<{
+  async compareClients(
+    tenantId: string,
+    userId: string,
+    clientIds: string[]
+  ): Promise<{
     clients: Array<{
       client: DextClientDetail;
       activity: DextClientActivityStats;
@@ -326,7 +343,7 @@ export class HealthService {
         message: "Client comparison requires unique client IDs."
       });
     }
-    const { provider } = await this.providers.resolve(tenantId);
+    const { provider } = await this.providers.resolve(tenantId, userId);
     const clients = [];
     for (const clientId of uniqueIds) {
       clients.push({
@@ -343,6 +360,7 @@ export class HealthService {
 
   async takeSnapshot(
     tenantId: string,
+    userId: string,
     snapshotKey?: string
   ): Promise<{
     id: string;
@@ -352,9 +370,13 @@ export class HealthService {
     clientCount: number;
   }> {
     const asOf = this.now().toISOString();
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const snapshot = await this.snapshots.create({
       tenantId,
+      ownerUserId: userId,
       connectionId,
       snapshotKey: snapshotKey ?? asOf.slice(0, 10),
       asOf,
@@ -372,6 +394,7 @@ export class HealthService {
 
   async compareSnapshots(
     tenantId: string,
+    userId: string,
     earlierSnapshotId: string,
     laterSnapshotId: string
   ): Promise<{
@@ -389,8 +412,16 @@ export class HealthService {
     }>;
     formulaVersion: string;
   }> {
-    const earlier = await this.snapshots.get(tenantId, earlierSnapshotId);
-    const later = await this.snapshots.get(tenantId, laterSnapshotId);
+    const earlier = await this.snapshots.get(
+      tenantId,
+      userId,
+      earlierSnapshotId
+    );
+    const later = await this.snapshots.get(
+      tenantId,
+      userId,
+      laterSnapshotId
+    );
     const earlierById = new Map(earlier.clients.map((client) => [client.id, client]));
     const laterById = new Map(later.clients.map((client) => [client.id, client]));
     const added = later.clients.filter((client) => !earlierById.has(client.id));
@@ -423,9 +454,16 @@ export class HealthService {
     };
   }
 
-  async search(tenantId: string, query: string): Promise<SearchResult[]> {
+  async search(
+    tenantId: string,
+    userId: string,
+    query: string
+  ): Promise<SearchResult[]> {
     const normalized = query.toLocaleLowerCase();
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     const clients = await provider.listClients();
     const matches = clients
       .filter((client) =>
@@ -440,7 +478,12 @@ export class HealthService {
         return {
           id,
           title: client.name,
-          url: await this.permalinks.create(tenantId, connectionId, id)
+          url: await this.permalinks.create(
+            tenantId,
+            userId,
+            connectionId,
+            id
+          )
         };
       })
     );
@@ -448,6 +491,7 @@ export class HealthService {
 
   async fetchRecord(
     tenantId: string,
+    userId: string,
     id: string,
     expectedConnectionId?: string
   ): Promise<FetchResult> {
@@ -464,7 +508,10 @@ export class HealthService {
         message: "The Dext client record ID is incomplete."
       });
     }
-    const { provider, connectionId } = await this.providers.resolve(tenantId);
+    const { provider, connectionId } = await this.providers.resolve(
+      tenantId,
+      userId
+    );
     if (expectedConnectionId && expectedConnectionId !== connectionId) {
       throw new ConnectorError({
         code: ConnectorErrorCode.NotFound,
@@ -491,7 +538,12 @@ export class HealthService {
         `Annual turnover: ${activity.annual.turnover ?? "unknown"}`,
         `Annual total activity count: ${activity.annual.totalCount ?? "unknown"}`
       ].join("\n"),
-      url: await this.permalinks.create(tenantId, connectionId, id),
+      url: await this.permalinks.create(
+        tenantId,
+        userId,
+        connectionId,
+        id
+      ),
       metadata: {
         module: "data-health",
         kind: "client",
@@ -500,6 +552,10 @@ export class HealthService {
         providerMode: provider.mode
       }
     };
+  }
+
+  supportsRecord(id: string): boolean {
+    return id.startsWith(HealthClientPrefix);
   }
 
   private summaryRiskReasons(

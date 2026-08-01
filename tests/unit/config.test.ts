@@ -14,8 +14,8 @@ function productionEnvironment(
     PUBLIC_BASE_URL: "https://dext-connector.example.com",
     STORAGE_MODE: "postgres",
     DATABASE_URL: "postgres://connector:secret@db/connector",
-    DEXT_DATA_SOURCE: "fixture",
-    DEXT_LIVE_REQUESTS_ENABLED: "false",
+    DEXT_DATA_SOURCE: "live",
+    DEXT_LIVE_REQUESTS_ENABLED: "true",
     AUTH_MODE: "oauth",
     ALLOW_DEVELOPMENT_AUTH: "false",
     AUTH_ISSUER: "https://auth.example.com",
@@ -33,6 +33,7 @@ describe("configuration safety gates", () => {
     const config = fixtureConfig();
     expect(config.DEXT_DATA_SOURCE).toBe("fixture");
     expect(config.DEXT_LIVE_REQUESTS_ENABLED).toBe(false);
+    expect(config.DEXT_COMMERCE_ENABLED).toBe(false);
   });
 
   it("rejects live mode in a test process even when its gate is set", () => {
@@ -44,7 +45,7 @@ describe("configuration safety gates", () => {
         DATABASE_URL: "postgres://test.invalid/connector",
         CREDENTIAL_MASTER_KEY: masterKey
       })
-    ).toThrow(/Tests reject live Dext mode/u);
+    ).toThrow(/Tests reject live Dext requests/u);
   });
 
   it("rejects live development mode without the explicit gate", () => {
@@ -62,6 +63,19 @@ describe("configuration safety gates", () => {
     ).toThrow(/Live Dext mode is locked/u);
   });
 
+  it("rejects Commerce enablement without live-request and encrypted-storage gates", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "development",
+        DEXT_DATA_SOURCE: "fixture",
+        DEXT_COMMERCE_ENABLED: "true",
+        DEXT_LIVE_REQUESTS_ENABLED: "false",
+        AUTH_MODE: "development",
+        ALLOW_DEVELOPMENT_AUTH: "true"
+      })
+    ).toThrow(/Commerce requires explicit live-request enablement/u);
+  });
+
   it("rejects development authentication in production", () => {
     expect(() =>
       loadConfig(
@@ -71,6 +85,17 @@ describe("configuration safety gates", () => {
         })
       )
     ).toThrow(/Production rejects development authentication/u);
+  });
+
+  it("rejects any fixture fallback in production", () => {
+    expect(() =>
+      loadConfig(
+        productionEnvironment({
+          DEXT_DATA_SOURCE: "fixture",
+          DEXT_LIVE_REQUESTS_ENABLED: "false"
+        })
+      )
+    ).toThrow(/fixture fallback is forbidden/u);
   });
 
   it.each([

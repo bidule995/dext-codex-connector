@@ -23,3 +23,7 @@ advisory are ready.
 
 If you believe a live credential has been exposed, revoke it through the
 appropriate provider immediately before reporting the connector issue.
+
+The local Windows setup stores DPAPI ciphertext under
+`%LOCALAPPDATA%\dext-codex-connector`. Do not attach those files to a report.
+Use synthetic credentials and payloads in reproductions.
