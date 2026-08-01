@@ -19,6 +19,24 @@ export interface DextCommerceProviderResolver {
   ): Promise<ResolvedDextCommerceProvider>;
 }
 
+export class StaticDextCommerceProviderResolver
+  implements DextCommerceProviderResolver
+{
+  constructor(
+    private readonly provider: DextCommerceProvider,
+    private readonly connectionId = "static-commerce"
+  ) {}
+
+  async resolve(
+    tenantId: string,
+    userId: string
+  ): Promise<ResolvedDextCommerceProvider> {
+    void tenantId;
+    void userId;
+    return { connectionId: this.connectionId, provider: this.provider };
+  }
+}
+
 export class LiveDextCommerceProviderResolver
   implements DextCommerceProviderResolver
 {

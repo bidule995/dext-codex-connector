@@ -4,9 +4,7 @@ const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
   JSON.parse(await readFile(new URL(path, root), "utf8"));
 const assert = (condition, message) => {
-  if (!condition) {
-    throw new Error(message);
-  }
+  if (!condition) throw new Error(message);
 };
 
 const [packageJson, manifest, mcp, marketplace, sourceVersion, bundle] =
@@ -16,7 +14,7 @@ const [packageJson, manifest, mcp, marketplace, sourceVersion, bundle] =
     readJson(".mcp.json"),
     readJson(".agents/plugins/marketplace.json"),
     readFile(new URL("src/version.ts", root), "utf8"),
-    readFile(new URL("plugin/runtime/dext-fixture-stdio.mjs", root), "utf8")
+    readFile(new URL("plugin/runtime/dext-local-stdio.mjs", root), "utf8")
   ]);
 
 const semver =
@@ -31,24 +29,15 @@ assert(
   sourceVersion.includes(`CONNECTOR_VERSION = "${manifest.version}"`),
   "Source and plugin versions differ."
 );
-assert(
-  manifest.mcpServers === "./.mcp.json",
-  "Plugin must reference .mcp.json."
-);
+assert(manifest.mcpServers === "./.mcp.json", "Plugin must reference .mcp.json.");
 assert(
   ["Dext Data Health", "Dext Connector"].includes(
     manifest.interface?.displayName
   ),
   "Missing display name."
 );
-assert(
-  manifest.interface?.category === "Productivity",
-  "Unexpected category."
-);
-assert(
-  manifest.interface?.brandColor === "#176B87",
-  "Unexpected brand color."
-);
+assert(manifest.interface?.category === "Productivity", "Unexpected category.");
+assert(manifest.interface?.brandColor === "#176B87", "Unexpected brand color.");
 assert(
   Array.isArray(manifest.interface?.capabilities) &&
     manifest.interface.capabilities.length > 0,
@@ -63,6 +52,10 @@ assert(
     ),
   "Plugin starter prompts must contain one to three entries of at most 128 characters."
 );
+assert(
+  !JSON.stringify(manifest).toLocaleLowerCase().includes("fixture"),
+  "Local live plugin manifest still advertises fixture behavior."
+);
 
 for (const asset of [manifest.interface.composerIcon, manifest.interface.logo]) {
   assert(
@@ -73,36 +66,26 @@ for (const asset of [manifest.interface.composerIcon, manifest.interface.logo]) 
 }
 
 const server = mcp.mcpServers?.dext;
-const hosted = typeof server?.url === "string";
-if (hosted) {
-  const url = new URL(server.url);
-  assert(url.protocol === "https:", "Hosted MCP URL must use HTTPS.");
-  assert(url.pathname === "/mcp", "Hosted MCP URL must end at /mcp.");
-  assert(
-    server.command === undefined &&
-      server.args === undefined &&
-      server.cwd === undefined &&
-      server.env === undefined,
-    "Hosted MCP configuration must not include a stdio fallback."
-  );
-} else {
-  assert(server?.cwd === ".", "Dext MCP server must run from the plugin root.");
-  assert(server?.command === "node", "Dext MCP server must use Node.js.");
-  assert(
-    JSON.stringify(server?.args) ===
-      JSON.stringify(["./plugin/runtime/dext-fixture-stdio.mjs"]),
-    "Unexpected Dext MCP server arguments."
-  );
-  assert(
-    server.env === undefined,
-    "Fixture MCP configuration must not inject environment values."
-  );
+assert(server?.cwd === ".", "Dext MCP server must run from the plugin root.");
+assert(server?.command === "node", "Dext MCP server must use Node.js.");
+assert(
+  JSON.stringify(server?.args) ===
+    JSON.stringify(["./plugin/runtime/dext-local-stdio.mjs"]),
+  "Unexpected Dext MCP server arguments."
+);
+assert(server.url === undefined, "Local plugin must not use a hosted URL.");
+assert(server.env === undefined, "Local plugin must not inject secret values.");
+assert(Array.isArray(server.env_vars), "Local plugin must declare env_vars.");
+for (const name of [
+  "DEXT_CONNECTOR_MODE",
+  "DEXT_LOCAL_CONFIG_PATH",
+  "DEXT_DATA_HEALTH_TOKEN",
+  "DEXT_COMMERCE_API_KEY"
+]) {
+  assert(server.env_vars.includes(name), `Missing forwarded variable ${name}.`);
 }
 
-assert(
-  marketplace.name === "dext-codex-connector",
-  "Unexpected marketplace name."
-);
+assert(marketplace.name === "dext-codex-connector", "Unexpected marketplace name.");
 assert(
   marketplace.plugins?.length === 1,
   "Marketplace must expose exactly one plugin."
@@ -113,50 +96,41 @@ assert(
   entry.source?.source === "local" && entry.source?.path === "./",
   "Marketplace must point at the repository-root plugin."
 );
-assert(
-  entry.policy?.installation === "AVAILABLE",
-  "Unexpected installation policy."
-);
-assert(
-  entry.policy?.authentication === "ON_INSTALL",
-  "Unexpected authentication policy."
-);
+assert(entry.policy?.installation === "AVAILABLE", "Unexpected installation policy.");
+assert(entry.policy?.authentication === "ON_INSTALL", "Unexpected authentication policy.");
 assert(entry.category === "Productivity", "Unexpected marketplace category.");
 
 await access(new URL(".app.json", root)).then(
   () => {
-    throw new Error(
-      ".app.json must not exist before an official connector ID is assigned."
-    );
+    throw new Error(".app.json must not exist before an official connector ID is assigned.");
   },
   () => undefined
 );
 
 for (const forbidden of [
-  "api.precision.dext.com",
+  "Northstar Studio Ltd",
+  "Harbor Goods Ltd",
+  "Orchard Labs Ltd",
   "DATABASE_URL",
   "CREDENTIAL_MASTER_KEY",
-  "DEXT_DATA_SOURCE",
-  "DEXT_LIVE_REQUESTS_ENABLED",
-  "AesGcmEnvelopeCredentialDecryptor",
-  "LiveDextHealthProviderResolver",
   "PostgresRepositories",
-  "fastify"
+  "AesGcmEnvelopeCredentialDecryptor",
+  "@fastify/rate-limit"
 ]) {
   assert(
     !bundle.includes(forbidden),
-    `Plugin bundle contains forbidden production token: ${forbidden}`
+    `Local plugin bundle contains forbidden token: ${forbidden}`
   );
 }
-assert(
-  bundle.includes("Northstar Studio Ltd"),
-  "Plugin bundle is missing fixture data."
-);
-assert(
-  bundle.includes("providerMode"),
-  "Plugin bundle is missing fixture capability output."
-);
+for (const required of [
+  "api.precision.dext.com",
+  "sandbox-api.greenback.com",
+  "windows-dpapi-current-user",
+  "providerMode"
+]) {
+  assert(bundle.includes(required), `Local plugin bundle is missing ${required}.`);
+}
 
 process.stdout.write(
-  `Codex plugin ${manifest.name}@${manifest.version} validated in ${hosted ? "hosted" : "fixture-only"} mode.\n`
+  `Codex plugin ${manifest.name}@${manifest.version} validated in local live mode.\n`
 );

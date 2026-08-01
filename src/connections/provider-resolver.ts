@@ -22,7 +22,8 @@ export class StaticDextHealthProviderResolver
 
   constructor(
     provider: DextHealthProvider,
-    tenantProviders: ReadonlyMap<string, DextHealthProvider> = new Map()
+    tenantProviders: ReadonlyMap<string, DextHealthProvider> = new Map(),
+    private readonly connectionId = "static-data-health"
   ) {
     this.configuredMode = provider.mode;
     this.tenantProviders = new Map([["*", provider], ...tenantProviders]);
@@ -42,7 +43,7 @@ export class StaticDextHealthProviderResolver
       });
     }
     return {
-      connectionId: `fixture-connection:${tenantId}`,
+      connectionId: `${this.connectionId}:${tenantId}`,
       provider
     };
   }

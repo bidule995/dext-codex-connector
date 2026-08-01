@@ -43,17 +43,18 @@ describe("public release metadata", () => {
 
     expect(release).toContain('      - "v*.*.*"');
     expect(release).toContain("pnpm pack --pack-destination release");
-    expect(release).toContain("pnpm release:verify-hosted");
+    expect(release).toContain("pnpm release:verify-local");
     expect(release).toContain("dext-codex-plugin-");
-    expect(release).not.toContain(".mcp.json assets plugin/runtime");
+    expect(release).toContain("plugin/runtime/dext-local-stdio.mjs");
+    expect(release).toContain("scripts/configure-local.ps1");
+    expect(release).not.toContain("docker/build-push-action");
     expect(release).toContain("--prerelease");
-    expect(release).toContain("sbom: true");
     for (const workflow of workflows) {
       expect(workflow).not.toMatch(/uses:\s+[^\s]+@v\d/u);
     }
   });
 
-  it("refuses placeholder hosted endpoints and fixture live releases", () => {
+  it("refuses placeholder hosted endpoints and verifies the local release", () => {
     const prepare = spawnSync(
       process.execPath,
       [
@@ -72,13 +73,13 @@ describe("public release metadata", () => {
       process.execPath,
       [
         fileURLToPath(
-          new URL("../../scripts/verify-hosted-release.mjs", import.meta.url)
+          new URL("../../scripts/verify-local-release.mjs", import.meta.url)
         )
       ],
       { encoding: "utf8" }
     );
-    expect(verify.status).not.toBe(0);
-    expect(verify.stderr).toContain("hosted dext.url");
+    expect(verify.status).toBe(0);
+    expect(verify.stdout).toContain("Local live Codex plugin release checks passed");
   });
 
   it("documents unofficial status and private vulnerability reporting", async () => {

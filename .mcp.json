@@ -4,7 +4,17 @@
       "cwd": ".",
       "command": "node",
       "args": [
-        "./plugin/runtime/dext-fixture-stdio.mjs"
+        "./plugin/runtime/dext-local-stdio.mjs"
+      ],
+      "env_vars": [
+        "DEXT_CONNECTOR_MODE",
+        "DEXT_LOCAL_CONFIG_PATH",
+        "DEXT_DATA_HEALTH_ENABLED",
+        "DEXT_DATA_HEALTH_TOKEN",
+        "DEXT_COMMERCE_ENABLED",
+        "DEXT_COMMERCE_API_KEY",
+        "DEXT_COMMERCE_ENVIRONMENT",
+        "DEXT_RISK_DETAIL_REQUEST_BUDGET"
       ]
     }
   }

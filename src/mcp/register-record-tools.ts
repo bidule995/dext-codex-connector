@@ -5,6 +5,7 @@ import { FetchInputSchema, SearchInputSchema } from "../contracts/tool-schemas.j
 import type { AppDependencies } from "../dependencies.js";
 import { executeTool, jsonTextResult } from "./result.js";
 import { toolSecurity } from "./security.js";
+import type { ToolSecurityMode } from "./security.js";
 
 const upstreamReadAnnotations = {
   readOnlyHint: true,
@@ -16,7 +17,8 @@ const upstreamReadAnnotations = {
 export function registerRecordTools(
   server: McpServer,
   dependencies: AppDependencies,
-  auth: AuthContext
+  auth: AuthContext,
+  securityMode: ToolSecurityMode = "oauth"
 ): void {
   const common = {
     auth,
@@ -33,7 +35,7 @@ export function registerRecordTools(
         "Use this when you need to find records across the Dext modules connected by the current user.",
       inputSchema: SearchInputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.RecordsRead)
+      ...toolSecurity(ConnectorScopes.RecordsRead, securityMode)
     },
     async ({ query }) =>
       executeTool({ ...common, tool: "search" }, async () =>
@@ -55,7 +57,7 @@ export function registerRecordTools(
         "Use this when you have a Dext connector record ID and need its complete searchable text and metadata.",
       inputSchema: FetchInputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.RecordsRead)
+      ...toolSecurity(ConnectorScopes.RecordsRead, securityMode)
     },
     async ({ id }) =>
       executeTool(

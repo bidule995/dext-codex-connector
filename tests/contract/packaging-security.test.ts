@@ -37,13 +37,28 @@ describe("packaging security", () => {
   it("includes the installable Codex plugin in the package archive", async () => {
     const destination = await mkdtemp(join(tmpdir(), "dext-pack-"));
     const pnpmCli = process.env["npm_execpath"];
-    expect(pnpmCli).toBeTruthy();
     try {
-      execFileSync(
-        process.execPath,
-        [pnpmCli!, "pack", "--pack-destination", destination],
-        { stdio: "pipe" }
-      );
+      if (pnpmCli) {
+        execFileSync(
+          process.execPath,
+          [pnpmCli, "pack", "--pack-destination", destination],
+          { stdio: "pipe" }
+        );
+      } else {
+        if (process.platform === "win32") {
+          execFileSync(
+            process.env["ComSpec"] ?? "cmd.exe",
+            ["/d", "/s", "/c", "pnpm", "pack", "--pack-destination", destination],
+            { stdio: "pipe" }
+          );
+        } else {
+          execFileSync(
+            "pnpm",
+            ["pack", "--pack-destination", destination],
+            { stdio: "pipe" }
+          );
+        }
+      }
       const archive = (await readdir(destination)).find((name) =>
         name.endsWith(".tgz")
       );
@@ -56,7 +71,11 @@ describe("packaging security", () => {
         "package/.codex-plugin/plugin.json",
         "package/.mcp.json",
         "package/assets/icon.svg",
-        "package/plugin/runtime/dext-fixture-stdio.mjs",
+        "package/plugin/runtime/dext-local-stdio.mjs",
+        "package/scripts/configure-local.ps1",
+        "package/scripts/show-local-status.ps1",
+        "package/scripts/remove-local-credentials.ps1",
+        "package/docs/local-setup.md",
         "package/THIRD_PARTY_NOTICES.md"
       ]) {
         expect(listing).toContain(required);
@@ -71,6 +90,9 @@ describe("packaging security", () => {
       ).toBe(false);
       expect(files.some((path) => path.includes("node_modules/"))).toBe(false);
       expect(files.some((path) => /cookie|\.log$/iu.test(path))).toBe(false);
+      expect(files).not.toContain(
+        "package/plugin/runtime/dext-fixture-stdio.mjs"
+      );
     } finally {
       await rm(destination, { recursive: true, force: true });
     }

@@ -1,6 +1,9 @@
 # Hosted connector deployment
 
-The real Codex connector is the repository's Fastify service exposed as a public HTTPS Streamable HTTP MCP endpoint at `/mcp`. The checked-in plugin remains on its fictional stdio runtime until a real host, OAuth client, and isolated Dext credentials pass acceptance; this prevents a placeholder release.
+> [!NOTE]
+> This document describes deferred work. The `0.2.0-beta.1` Codex plugin uses the bundled local stdio runtime documented in [Local setup](local-setup.md).
+
+The repository contains a Fastify service that can become a public HTTPS Streamable HTTP MCP endpoint at `/mcp`. A hosted release requires a real host, an OAuth client, and validation against an isolated Dext test tenant.
 
 ## Required infrastructure
 
@@ -60,6 +63,6 @@ pnpm release:verify-hosted
 pnpm release:verify-hosted -- --network
 ```
 
-The preparation script rejects localhost, IP literals, `.invalid`, `.example`, credentials, query strings, fragments, non-HTTPS URLs, and paths other than `/mcp`. The network check proves live-mode `/healthz`, protected-resource metadata, and unauthenticated OAuth enforcement without calling Dext. The release workflow repeats it and excludes the fixture runtime from plugin archives.
+The preparation script rejects localhost, IP literals, `.invalid`, `.example`, credentials, query strings, fragments, non-HTTPS URLs, and paths other than `/mcp`. The network check proves live-mode `/healthz`, protected-resource metadata, and unauthenticated OAuth enforcement without calling Dext. A future hosted release workflow would exclude the local stdio runtime. The current release workflow publishes the local bundle and runs `release:verify-local`.
 
-Do not tag or install the live plugin until Codex can complete OAuth and call `connection_status`, standard `search`/`fetch`, and the enabled direct tools against an isolated test identity. Roll back by removing the remote plugin and reinstalling the last fixture prerelease; do not delete encrypted rows during rollback.
+Do not convert the plugin to hosted mode until Codex can complete OAuth and call `connection_status`, standard `search`/`fetch`, and the enabled direct tools against an isolated test identity. Roll back by removing the remote plugin and reinstalling the local prerelease; do not delete encrypted rows during rollback.

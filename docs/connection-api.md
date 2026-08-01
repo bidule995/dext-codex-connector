@@ -1,5 +1,8 @@
 # Authenticated connection API
 
+> [!NOTE]
+> This API belongs to the deferred hosted service. The local Codex plugin uses Windows DPAPI or explicit environment variables as described in [Local setup](local-setup.md).
+
 Dext credentials never enter MCP tools, prompts, tool results, plugin configuration, or OAuth access tokens. The hosted service accepts them only over its authenticated HTTPS control API, validates them against the selected documented Dext host, envelope-encrypts them, and stores the ciphertext for the current OAuth user.
 
 The API and MCP use the same bearer authentication, but different scopes:

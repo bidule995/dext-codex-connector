@@ -45,7 +45,7 @@ export interface AppDependencies {
   commerce?: CommerceService;
   connections?: ConnectionService;
   capabilities: CapabilityService;
-  resourceMetadataUrl: string;
+  resourceMetadataUrl?: string;
   close(): Promise<void>;
 }
 

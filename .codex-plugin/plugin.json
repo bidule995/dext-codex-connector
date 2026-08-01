@@ -1,7 +1,7 @@
 {
   "name": "dext-codex-connector",
   "version": "0.2.0-beta.1",
-  "description": "Fixture-only Dext Data Health analysis through a native Codex plugin.",
+  "description": "Local, read-only Dext Data Health access through a native Codex plugin.",
   "author": {
     "name": "César Cros",
     "url": "https://github.com/bidule995"
@@ -14,25 +14,25 @@
     "data-health",
     "accounting",
     "mcp",
-    "fixture"
+    "local"
   ],
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Dext Data Health",
-    "shortDescription": "Explore fictional Dext health data safely",
-    "longDescription": "Read-only Dext Data Health tools backed exclusively by fictional fixture data and process-local memory.",
+    "shortDescription": "Analyze Dext Data Health locally",
+    "longDescription": "Run read-only Dext Data Health tools from a bundled local MCP process using a credential configured outside Codex conversations. Optional Dext Commerce access requires a separate API key.",
     "developerName": "César Cros",
     "category": "Productivity",
     "capabilities": [
-      "Read-only fixture tools",
+      "Local read-only Dext tools",
       "Portfolio health analysis",
-      "MCP"
+      "Optional Dext Commerce reads"
     ],
     "websiteURL": "https://github.com/bidule995/dext-codex-connector",
     "defaultPrompt": [
-      "Summarize the health of the fixture client portfolio.",
-      "Find fixture clients with health risks and explain why.",
-      "Compare two fixture clients' health metrics."
+      "Check my local Dext connection status.",
+      "Summarize my Dext client portfolio health.",
+      "Find clients with health risks and explain why."
     ],
     "brandColor": "#176B87",
     "composerIcon": "./assets/icon.svg",

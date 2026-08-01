@@ -8,20 +8,24 @@ stable compatibility promise.
 
 ### Added
 
+- Bundled local stdio runtime for read-only Data Health access using a token configured outside Codex conversations.
+- Windows setup, status, rotation, and removal workflow using current-user DPAPI protection.
+- Disabled-by-default startup, local `noauth` tool declarations, and environment-based setup for non-Windows systems.
 - Authenticated connection API for validating and envelope-encrypting user-submitted Dext credentials outside MCP conversations.
 - User-owned Data Health and Commerce connections with principal-level PostgreSQL row-level security for credentials, snapshots, and permalinks.
 - Read-only Dext Commerce invoice and bill provider, `list_invoices`, and `get_invoice` tools using the documented sandbox and production hosts.
 - Unified standard `search` and `fetch` across enabled Data Health and Commerce modules.
-- Hosted-plugin preparation and release gates that reject placeholders, stdio fixture fallbacks, and non-HTTPS endpoints.
+- Local plugin release gates plus deferred hosted-plugin preparation checks.
 
 ### Changed
 
-- Production now fails closed unless live Dext requests, OAuth, PostgreSQL, and secret-backed encryption are all configured.
-- Public release archives omit the fixture stdio runtime in the hosted release workflow.
+- The installable plugin starts with provider modules disabled unless it finds an external credential.
+- Release archives contain the portable local bundle and setup documentation, without fixture records or hosted-service dependencies.
 
 ### Security
 
 - Connection lookup, credential decryption, snapshots, and record links are bound to both the authenticated tenant and user.
+- Local Windows credentials use DPAPI current-user protection; local tool results report only credential presence and source.
 - No test or CI path authenticates to Dext; Commerce and Data Health HTTP coverage uses mocked or loopback-only transports.
 
 ## [0.1.0-beta.2] - 2026-08-01

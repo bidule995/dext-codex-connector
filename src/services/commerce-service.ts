@@ -1,7 +1,7 @@
 import type { DextCommerceProviderResolver } from "../connections/commerce-provider-resolver.js";
 import type { DextCommerceTransaction } from "../contracts/dext-commerce.js";
 import { ConnectorError, ConnectorErrorCode } from "../errors.js";
-import type { PermalinkService } from "./permalink-service.js";
+import type { RecordLinkService } from "./permalink-service.js";
 import type { FetchResult, SearchResult } from "./health-service.js";
 
 const CommerceInvoicePrefix = "dext:commerce:invoice:";
@@ -19,7 +19,7 @@ export interface ListInvoicesOptions {
 export class CommerceService {
   constructor(
     private readonly providers: DextCommerceProviderResolver,
-    private readonly permalinks: PermalinkService,
+    private readonly permalinks: RecordLinkService,
     private readonly now: () => Date = () => new Date()
   ) {}
 

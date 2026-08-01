@@ -13,13 +13,24 @@ export interface OAuthSecurityScheme {
   scopes: string[];
 }
 
-export function toolSecurity(scope: string): {
-  securitySchemes: OAuthSecurityScheme[];
-  _meta: { securitySchemes: OAuthSecurityScheme[] };
+export interface NoAuthSecurityScheme {
+  type: "noauth";
+}
+
+export type ToolSecurityMode = "oauth" | "noauth";
+export type ToolSecurityScheme = OAuthSecurityScheme | NoAuthSecurityScheme;
+
+export function toolSecurity(
+  scope: string,
+  mode: ToolSecurityMode = "oauth"
+): {
+  securitySchemes: ToolSecurityScheme[];
+  _meta: { securitySchemes: ToolSecurityScheme[] };
 } {
-  const securitySchemes: OAuthSecurityScheme[] = [
-    { type: "oauth2", scopes: [scope] }
-  ];
+  const securitySchemes: ToolSecurityScheme[] =
+    mode === "noauth"
+      ? [{ type: "noauth" }]
+      : [{ type: "oauth2", scopes: [scope] }];
   return {
     securitySchemes,
     _meta: { securitySchemes: structuredClone(securitySchemes) }

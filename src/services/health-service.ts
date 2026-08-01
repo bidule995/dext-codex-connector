@@ -11,7 +11,7 @@ import type {
   SnapshotRepository
 } from "../storage/repositories.js";
 import type { CursorService } from "./cursor-service.js";
-import type { PermalinkService } from "./permalink-service.js";
+import type { RecordLinkService } from "./permalink-service.js";
 
 const FormulaVersion = "health-v1";
 const HealthClientPrefix = "dext:health:client:";
@@ -60,7 +60,7 @@ export class HealthService {
   constructor(
     private readonly providers: DextHealthProviderResolver,
     private readonly snapshots: SnapshotRepository,
-    private readonly permalinks: PermalinkService,
+    private readonly permalinks: RecordLinkService,
     private readonly cursors: CursorService,
     private readonly detailRequestBudget: number,
     private readonly now: () => Date = () => new Date()

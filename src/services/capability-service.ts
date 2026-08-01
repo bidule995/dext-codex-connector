@@ -12,18 +12,57 @@ export interface CapabilityConfig {
   commerceEnabled: boolean;
 }
 
+export type LocalCredentialSource =
+  | "environment"
+  | "windows-dpapi"
+  | "missing";
+
+export interface LocalModuleStatus {
+  configured: boolean;
+  enabled: boolean;
+  connected: boolean;
+  mode: "live" | "disabled";
+  credentialSource: LocalCredentialSource;
+  environment?: "sandbox" | "production";
+  reason?: string;
+}
+
+export interface LocalCapabilityStatus {
+  dataHealth: LocalModuleStatus;
+  commerce: LocalModuleStatus;
+}
+
 export class CapabilityService {
   constructor(
     private readonly config: CapabilityConfig,
     private readonly health: HealthService,
     private readonly commerce?: CommerceService,
-    private readonly connections?: ConnectionService
+    private readonly connections?: ConnectionService,
+    private readonly localStatus?: LocalCapabilityStatus
   ) {}
 
   async connectionStatus(
     tenantId: string,
     userId: string
   ): Promise<Record<string, unknown>> {
+    if (this.localStatus) {
+      return {
+        providerMode: this.health.providerMode,
+        liveDextRequestsEnabled: this.config.liveDextRequestsEnabled,
+        connections: [],
+        modules: {
+          dataHealth: {
+            ...this.localStatus.dataHealth,
+            endpointContracts: 3
+          },
+          commerce: {
+            ...this.localStatus.commerce,
+            endpointContracts: CommerceEndpointCatalog.length
+          },
+          prepare: PrepareModuleStatus
+        }
+      };
+    }
     const connections = this.connections
       ? await this.connections.list(tenantId, userId)
       : [];
@@ -67,12 +106,10 @@ export class CapabilityService {
   }
 
   listCapabilities(): Record<string, unknown> {
-    const enabledTools = [
-      "connection_status",
-      "list_capabilities",
-      "search",
-      "fetch"
-    ];
+    const enabledTools = ["connection_status", "list_capabilities"];
+    if (this.health.providerMode !== "disabled" || this.commerce) {
+      enabledTools.push("search", "fetch");
+    }
     if (this.health.providerMode !== "disabled") {
       enabledTools.push(
         "list_clients",
@@ -89,10 +126,18 @@ export class CapabilityService {
     return {
       enabledTools,
       disabledModules: {
+        ...(this.health.providerMode !== "disabled"
+          ? {}
+          : {
+              dataHealth:
+                this.localStatus?.dataHealth.reason ??
+                "Configure a Dext Data Health connection."
+            }),
         ...(this.commerce
           ? {}
           : {
               commerce:
+                this.localStatus?.commerce.reason ??
                 "Enable the reviewed Commerce provider and provision a sandbox/test connection."
             }),
         prepare: PrepareModuleStatus.reason

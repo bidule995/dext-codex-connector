@@ -10,6 +10,7 @@ import {
 import type { AppDependencies } from "../dependencies.js";
 import { executeTool, structuredResult } from "./result.js";
 import { toolSecurity } from "./security.js";
+import type { ToolSecurityMode } from "./security.js";
 
 const upstreamReadAnnotations = {
   readOnlyHint: true,
@@ -21,7 +22,8 @@ const upstreamReadAnnotations = {
 export function registerCommerceTools(
   server: McpServer,
   dependencies: AppDependencies,
-  auth: AuthContext
+  auth: AuthContext,
+  securityMode: ToolSecurityMode = "oauth"
 ): void {
   const commerce = dependencies.commerce;
   if (!commerce) return;
@@ -41,7 +43,7 @@ export function registerCommerceTools(
       inputSchema: ListInvoicesInputSchema,
       outputSchema: ListInvoicesOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.CommerceRead)
+      ...toolSecurity(ConnectorScopes.CommerceRead, securityMode)
     },
     async (input) =>
       executeTool({ ...common, tool: "list_invoices" }, async () =>
@@ -74,7 +76,7 @@ export function registerCommerceTools(
       inputSchema: GetInvoiceInputSchema,
       outputSchema: GetInvoiceOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.CommerceRead)
+      ...toolSecurity(ConnectorScopes.CommerceRead, securityMode)
     },
     async ({ transactionId }) =>
       executeTool(

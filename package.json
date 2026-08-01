@@ -28,6 +28,7 @@
     "LICENSE",
     "NOTICE",
     "plugin/runtime",
+    "scripts",
     "README.md",
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md"
@@ -44,6 +45,7 @@
     "dev": "node --watch --env-file-if-exists=.env --import tsx src/server.ts",
     "lint": "eslint src tests --max-warnings=0",
     "release:verify": "node scripts/verify-release-version.mjs",
+    "release:verify-local": "node scripts/verify-local-release.mjs",
     "release:verify-hosted": "node scripts/verify-hosted-release.mjs",
     "plugin:prepare-hosted": "node scripts/prepare-hosted-plugin.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",

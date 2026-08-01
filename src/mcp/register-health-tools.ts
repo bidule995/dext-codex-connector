@@ -21,6 +21,7 @@ import {
 import type { AppDependencies } from "../dependencies.js";
 import { executeTool, structuredResult } from "./result.js";
 import { toolSecurity } from "./security.js";
+import type { ToolSecurityMode } from "./security.js";
 
 const upstreamReadAnnotations = {
   readOnlyHint: true,
@@ -39,7 +40,8 @@ const snapshotAnnotations = {
 export function registerHealthTools(
   server: McpServer,
   dependencies: AppDependencies,
-  auth: AuthContext
+  auth: AuthContext,
+  securityMode: ToolSecurityMode = "oauth"
 ): void {
   const common = {
     auth,
@@ -57,7 +59,7 @@ export function registerHealthTools(
       inputSchema: ListClientsInputSchema,
       outputSchema: ListClientsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ query, alertLevels, limit }) =>
       executeTool(
@@ -82,7 +84,7 @@ export function registerHealthTools(
       inputSchema: ClientIdInputSchema,
       outputSchema: GetClientOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientId }) =>
       executeTool(
@@ -107,7 +109,7 @@ export function registerHealthTools(
       inputSchema: ClientIdInputSchema,
       outputSchema: ClientActivityOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientId }) =>
       executeTool(
@@ -136,7 +138,7 @@ export function registerHealthTools(
       inputSchema: SummarizePortfolioInputSchema,
       outputSchema: PortfolioOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ alertLevels, healthScoreBelow }) =>
       executeTool(
@@ -165,7 +167,7 @@ export function registerHealthTools(
       inputSchema: FindHealthRisksInputSchema,
       outputSchema: RiskOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async (input) =>
       executeTool(
@@ -206,7 +208,7 @@ export function registerHealthTools(
       inputSchema: CompareClientsInputSchema,
       outputSchema: CompareClientsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ clientIds }) =>
       executeTool(
@@ -231,7 +233,7 @@ export function registerHealthTools(
       inputSchema: SnapshotHealthInputSchema,
       outputSchema: SnapshotOutputSchema,
       annotations: snapshotAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthSnapshotsWrite)
+      ...toolSecurity(ConnectorScopes.HealthSnapshotsWrite, securityMode)
     },
     async ({ snapshotKey }) =>
       executeTool(
@@ -262,7 +264,7 @@ export function registerHealthTools(
       inputSchema: CompareSnapshotsInputSchema,
       outputSchema: CompareSnapshotsOutputSchema,
       annotations: upstreamReadAnnotations,
-      ...toolSecurity(ConnectorScopes.HealthRead)
+      ...toolSecurity(ConnectorScopes.HealthRead, securityMode)
     },
     async ({ earlierSnapshotId, laterSnapshotId }) =>
       executeTool(

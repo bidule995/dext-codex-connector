@@ -8,21 +8,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { describe, expect, it } from "vitest";
 
 const bundlePath = fileURLToPath(
-  new URL("../../plugin/runtime/dext-fixture-stdio.mjs", import.meta.url)
+  new URL("../../plugin/runtime/dext-local-stdio.mjs", import.meta.url)
 );
 const expectedTools = [
   "connection_status",
-  "list_capabilities",
-  "search",
-  "fetch",
-  "list_clients",
-  "get_client",
-  "get_client_activity_stats",
-  "summarize_portfolio_health",
-  "find_client_health_risks",
-  "compare_clients",
-  "snapshot_health_metrics",
-  "compare_health_snapshots"
+  "list_capabilities"
 ];
 
 function hostileEnvironment(): Record<string, string> {
@@ -72,21 +62,6 @@ function structured(result: unknown): Record<string, unknown> {
   return content as Record<string, unknown>;
 }
 
-function textContent(result: unknown): string {
-  if (typeof result !== "object" || result === null) {
-    throw new Error("Expected an MCP result object.");
-  }
-  const content = (result as { content?: unknown }).content;
-  if (!Array.isArray(content)) {
-    throw new Error("Expected MCP text content.");
-  }
-  const first = content[0] as { type?: unknown; text?: unknown } | undefined;
-  if (!first || first.type !== "text" || typeof first.text !== "string") {
-    throw new Error("Expected an MCP text result.");
-  }
-  return first.text;
-}
-
 async function call(
   client: Client,
   name: string,
@@ -98,86 +73,33 @@ async function call(
 }
 
 describe("committed Codex plugin stdio bundle", () => {
-  it("starts outside the checkout and serves every fixture tool under hostile live settings", async () => {
+  it("starts outside the checkout, defaults disabled, and ignores legacy hosted secrets", async () => {
     const { client, stderr } = await connectPlugin();
     try {
       const listed = await client.listTools();
       expect(listed.tools.map(({ name }) => name)).toEqual(expectedTools);
+      expect(
+        listed.tools.every(
+          (tool) =>
+            JSON.stringify(tool._meta?.["securitySchemes"]) ===
+            JSON.stringify([{ type: "noauth" }])
+        )
+      ).toBe(true);
 
       const status = structured(await call(client, "connection_status", {}));
       expect(status).toMatchObject({
-        providerMode: "fixture",
+        providerMode: "disabled",
         liveDextRequestsEnabled: false
       });
-      await call(client, "list_capabilities", {});
-
-      const search = await call(client, "search", { query: "harbor" });
-      const text = textContent(search);
-      const searchResult = JSON.parse(text) as {
-        results: Array<{ id: string }>;
-      };
-      await call(client, "fetch", { id: searchResult.results[0]!.id });
-
-      const clients = structured(await call(client, "list_clients", {}));
-      expect(clients).toMatchObject({ count: 3, truncated: false });
-      expect(JSON.stringify(clients)).toContain("Harbor Goods Ltd");
-      await call(client, "get_client", { clientId: "fixture-harbor" });
-      await call(client, "get_client_activity_stats", {
-        clientId: "fixture-harbor"
-      });
-      await call(client, "summarize_portfolio_health", {});
-      await call(client, "find_client_health_risks", {});
-      await call(client, "compare_clients", {
-        clientIds: ["fixture-northstar", "fixture-harbor"]
-      });
-
-      const earlier = structured(
-        await call(client, "snapshot_health_metrics", {
-          snapshotKey: "plugin-earlier"
-        })
+      const capabilities = structured(
+        await call(client, "list_capabilities", {})
       );
-      const later = structured(
-        await call(client, "snapshot_health_metrics", {
-          snapshotKey: "plugin-later"
-        })
-      );
-      await call(client, "compare_health_snapshots", {
-        earlierSnapshotId: earlier["id"],
-        laterSnapshotId: later["id"]
-      });
-      expect(stderr()).toBe("");
+      expect(capabilities).toMatchObject({ enabledTools: expectedTools });
+      expect(JSON.stringify(status)).not.toContain("must-never-be-read");
+      expect(JSON.stringify(capabilities)).not.toContain("must-never-be-read");
+      expect(stderr()).toContain("local MCP started in disabled mode");
     } finally {
       await client.close();
-    }
-  });
-
-  it("does not persist fixture snapshots between plugin processes", async () => {
-    const first = await connectPlugin();
-    let snapshotId: unknown;
-    try {
-      snapshotId = structured(
-        await call(first.client, "snapshot_health_metrics", {
-          snapshotKey: "ephemeral"
-        })
-      )["id"];
-    } finally {
-      await first.client.close();
-    }
-
-    const second = await connectPlugin();
-    try {
-      const result = await second.client.callTool({
-        name: "compare_health_snapshots",
-        arguments: {
-          earlierSnapshotId: snapshotId,
-          laterSnapshotId: snapshotId
-        }
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("was not found");
-      expect(second.stderr()).toBe("");
-    } finally {
-      await second.client.close();
     }
   });
 });

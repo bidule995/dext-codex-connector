@@ -2,13 +2,17 @@
 
 ## Data Health
 
-The code, offline contracts, user-owned PostgreSQL resolution, envelope encryption/decryption, authenticated connection API, and OAuth identity mapping are implemented. Registration is enabled in fixture mode and the hosted service can register the live provider. A production release still requires isolated validation of all three documented endpoints, hosted OAuth provisioning, managed secret/KMS operation, backups and retention, MCP Inspector/Codex/ChatGPT host-loop testing, and a rollback drill.
+The local beta registers Data Health tools after it finds a dedicated personal API token. The provider limits requests to the documented `api.precision.dext.com` host and 60 requests per minute. Automated tests use injected responses and do not validate a real Dext account.
+
+Before the maintainer calls the local beta production-ready, an authorized user should validate the three documented endpoints against a dedicated Dext test tenant. The current company account remains outside that validation scope.
+
+The hosted source adds user-owned PostgreSQL connections, envelope encryption, an authenticated connection API, and OAuth identity mapping. Hosting remains deferred until an isolated validation tenant, managed secrets, backups, telemetry redaction, and a public OAuth deployment exist.
 
 ## Commerce
 
-The repository contains a 33-entry endpoint catalog plus a strict read-only HTTP provider for `GET /v2/users/me`, `GET /v2/transactions`, and `GET /v2/transactions/{transaction_id}`. It adds `list_invoices` and `get_invoice` and integrates invoice/bill records into standard `search` and `fetch`. `DEXT_COMMERCE_ENABLED` remains false by default and a live release is still blocked on Commerce sandbox evidence.
+The repository contains a 33-entry endpoint catalog plus a read-only HTTP provider for `GET /v2/users/me`, `GET /v2/transactions`, and `GET /v2/transactions/{transaction_id}`. A separate Commerce API key adds `list_invoices`, `get_invoice`, and invoice/bill records in `search` and `fetch`. Local and hosted configurations keep Commerce disabled by default.
 
-Before enabling the read tools in a hosted deployment:
+Before enabling Commerce:
 
 - Obtain Dext Commerce sandbox credentials.
 - Confirm the documented envelope and opaque cursor behavior.
