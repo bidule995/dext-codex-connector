@@ -57,15 +57,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "fastify": "5.10.0",
-    "jose": "6.2.4",
-    "pg": "8.22.0",
-    "zod": "4.4.3"
+    "fastify": "5.12.1",
+    "jose": "6.2.10",
+    "pg": "8.23.0",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.2",
-    "@types/pg": "8.20.2",
+    "@types/pg": "8.23.1",
     "@vitest/coverage-v8": "4.1.10",
     "esbuild": "0.28.1",
     "eslint": "10.8.0",
